@@ -1,8 +1,12 @@
 import { ArrowUpRightOnBox, Trash } from "@medusajs/icons"
 import {
+  Alert,
   Badge,
   Button,
   Drawer,
+  Heading,
+  Hint,
+  Label,
   Prompt,
   Text,
   Textarea,
@@ -24,8 +28,8 @@ import {
   replyReview,
   REVIEWS_KEY,
 } from "../lib/api"
-import { Loading } from "./states"
 import { Stars } from "./stars"
+import { Loading } from "./states"
 import { StatusBadge } from "./status-badge"
 
 /** Full review for moderation: text, photos (pending ones streamed privately), approve / reject / delete, public reply. */
@@ -99,26 +103,38 @@ export const ReviewDrawer = ({
     onError,
   })
 
+  const isBusy =
+    moderate.isPending || remove.isPending || saveReply.isPending || removeReply.isPending
+
   return (
     <Drawer open={!!id} onOpenChange={(open) => !open && onClose()}>
-      <Drawer.Content className="max-w-lg">
+      <Drawer.Content>
         <Drawer.Header>
-          <Drawer.Title className="text-base font-semibold">{t("reviews.drawer.title")}</Drawer.Title>
+          <Drawer.Title asChild>
+            <Heading>{t("reviews.drawer.title")}</Heading>
+          </Drawer.Title>
         </Drawer.Header>
 
-        <Drawer.Body className="flex flex-col gap-y-6 overflow-y-auto px-6 py-5">
+        <Drawer.Body className="flex flex-col gap-y-6 overflow-y-auto">
           {isLoading || !review ? (
             <Loading />
           ) : (
             <>
               {/* Review Overview Card */}
-              <div className="p-4 rounded-xl border border-ui-border-base bg-ui-bg-subtle/50 flex flex-col gap-3">
+              <div className="bg-ui-bg-component shadow-elevation-card-rest flex flex-col gap-3 rounded-lg p-4">
                 <div className="flex flex-wrap items-center justify-between gap-2">
                   <div className="flex items-center gap-2">
                     <Stars rating={review.rating} size={16} />
-                    <span className="text-xs font-mono font-semibold text-ui-fg-base">
+                    <Text
+                      as="span"
+                      size="xsmall"
+                      leading="compact"
+                      weight="plus"
+                      family="mono"
+                      className="text-ui-fg-base tabular-nums"
+                    >
                       {review.rating}.0 / 5
-                    </span>
+                    </Text>
                   </div>
                   <div className="flex items-center gap-1.5">
                     <StatusBadge status={review.status} />
@@ -136,41 +152,51 @@ export const ReviewDrawer = ({
                 </div>
 
                 {review.title && (
-                  <Text size="base" weight="plus" className="text-ui-fg-base">
+                  <Text size="small" leading="compact" weight="plus" className="text-ui-fg-base">
                     {review.title}
                   </Text>
                 )}
 
-                <Text size="small" className="whitespace-pre-wrap leading-relaxed text-ui-fg-subtle">
+                <Text size="small" className="text-ui-fg-subtle whitespace-pre-wrap">
                   {review.body}
                 </Text>
 
-                <div className="pt-2 border-t border-ui-border-base/60 flex flex-wrap items-center justify-between gap-1 text-[11px] text-ui-fg-muted">
-                  <span>{review.display_name} {review.email ? `(${review.email})` : ""}</span>
-                  <span>{formatDateTime(review.created_at, l)}</span>
+                <div className="border-ui-border-base flex flex-wrap items-center justify-between gap-1 border-t pt-2">
+                  <Text as="span" size="xsmall" leading="compact" className="text-ui-fg-muted">
+                    {review.display_name} {review.email ? `(${review.email})` : ""}
+                  </Text>
+                  <Text as="span" size="xsmall" leading="compact" className="text-ui-fg-muted">
+                    {formatDateTime(review.created_at, l)}
+                  </Text>
                 </div>
               </div>
 
               {/* Linked Product & Order */}
               <div className="grid grid-cols-2 gap-3">
-                <div className="p-3 rounded-lg border border-ui-border-base bg-ui-bg-subtle flex flex-col gap-1">
-                  <Text size="xsmall" className="text-ui-fg-muted font-medium">Product</Text>
+                <div className="border-ui-border-base bg-ui-bg-subtle flex flex-col gap-1 rounded-lg border p-3">
+                  <Text size="xsmall" leading="compact" weight="plus" className="text-ui-fg-subtle">
+                    {t("reviews.columns.product")}
+                  </Text>
                   <Link
                     to={`/products/${review.product_id}`}
-                    className="txt-compact-small flex items-center gap-1.5 text-ui-fg-interactive hover:underline truncate"
+                    className="txt-compact-small text-ui-fg-interactive flex items-center gap-1.5 truncate hover:underline"
                   >
                     <ArrowUpRightOnBox width={14} height={14} className="shrink-0" />
                     <span className="truncate">{review.product_title ?? review.product_id}</span>
                   </Link>
                 </div>
-                <div className="p-3 rounded-lg border border-ui-border-base bg-ui-bg-subtle flex flex-col gap-1">
-                  <Text size="xsmall" className="text-ui-fg-muted font-medium">Order</Text>
+                <div className="border-ui-border-base bg-ui-bg-subtle flex flex-col gap-1 rounded-lg border p-3">
+                  <Text size="xsmall" leading="compact" weight="plus" className="text-ui-fg-subtle">
+                    {t("reviews.columns.order")}
+                  </Text>
                   <Link
                     to={`/orders/${review.order_id}`}
-                    className="txt-compact-small flex items-center gap-1.5 text-ui-fg-interactive hover:underline truncate"
+                    className="txt-compact-small text-ui-fg-interactive flex items-center gap-1.5 truncate hover:underline"
                   >
                     <ArrowUpRightOnBox width={14} height={14} className="shrink-0" />
-                    <span className="truncate">{review.order_display_id ? `#${review.order_display_id}` : review.order_id}</span>
+                    <span className="truncate">
+                      {review.order_display_id ? `#${review.order_display_id}` : review.order_id}
+                    </span>
                   </Link>
                 </div>
               </div>
@@ -178,7 +204,7 @@ export const ReviewDrawer = ({
               {/* Customer Photos */}
               {review.images.length > 0 && (
                 <div className="flex flex-col gap-2">
-                  <Text size="small" weight="plus" className="text-ui-fg-base">
+                  <Text size="small" leading="compact" weight="plus" className="text-ui-fg-base">
                     {t("reviews.drawer.photos", { count: review.images.length })}
                   </Text>
                   <div className="grid grid-cols-3 gap-2.5">
@@ -186,9 +212,9 @@ export const ReviewDrawer = ({
                       !img.available ? (
                         <div
                           key={img.id}
-                          className="flex aspect-square items-center justify-center rounded-lg border border-dashed border-ui-border-base bg-ui-bg-subtle p-2 text-center"
+                          className="border-ui-border-base bg-ui-bg-subtle flex aspect-square items-center justify-center rounded-lg border border-dashed p-2 text-center"
                         >
-                          <Text size="xsmall" className="text-ui-fg-muted">
+                          <Text size="xsmall" leading="compact" className="text-ui-fg-muted">
                             {t("reviews.drawer.deletedPhoto")}
                           </Text>
                         </div>
@@ -198,7 +224,7 @@ export const ReviewDrawer = ({
                           href={photoUrl(review.id, img.id)}
                           target="_blank"
                           rel="noopener noreferrer"
-                          className="group relative block aspect-square overflow-hidden rounded-lg border border-ui-border-base bg-ui-bg-subtle"
+                          className="border-ui-border-base bg-ui-bg-subtle group relative block aspect-square overflow-hidden rounded-lg border"
                         >
                           <img
                             src={photoUrl(review.id, img.id)}
@@ -218,24 +244,20 @@ export const ReviewDrawer = ({
                     )}
                   </div>
                   {review.images.some((i) => i.available && !i.published) && (
-                    <Text size="xsmall" className="text-ui-fg-muted">
-                      {t("reviews.drawer.photosHint")}
-                    </Text>
+                    <Hint>{t("reviews.drawer.photosHint")}</Hint>
                   )}
                 </div>
               )}
 
               {/* Moderation Notes / History */}
               {review.status === "rejected" && review.reject_reason && (
-                <div className="p-3 rounded-lg border border-red-200 dark:border-red-900/50 bg-red-50/50 dark:bg-red-950/20">
-                  <Text size="xsmall" className="text-red-700 dark:text-red-300">
-                    {t("reviews.drawer.rejectedWith", { reason: review.reject_reason })}
-                  </Text>
-                </div>
+                <Alert variant="error">
+                  {t("reviews.drawer.rejectedWith", { reason: review.reject_reason })}
+                </Alert>
               )}
 
               {review.moderated_by && (
-                <Text size="xsmall" className="text-ui-fg-muted">
+                <Text size="xsmall" leading="compact" className="text-ui-fg-muted">
                   {t("reviews.drawer.moderatedAt", {
                     date: formatDateTime(review.approved_at ?? review.rejected_at, l),
                   })}
@@ -243,23 +265,25 @@ export const ReviewDrawer = ({
               )}
 
               {/* Moderation Actions Box */}
-              <div className="p-4 rounded-xl border border-ui-border-base bg-ui-bg-subtle/30 flex flex-col gap-3">
-                <Text size="small" weight="plus" className="text-ui-fg-base">
+              <div className="border-ui-border-base bg-ui-bg-subtle flex flex-col gap-3 rounded-lg border p-4">
+                <Label htmlFor="review-reject-reason" size="small" weight="plus">
                   {t("reviews.drawer.moderation")}
-                </Text>
+                </Label>
                 <Textarea
+                  id="review-reject-reason"
                   rows={2}
                   placeholder={t("reviews.drawer.rejectReason")}
                   value={reason}
+                  disabled={isBusy}
                   onChange={(e) => setReason(e.target.value)}
                   maxLength={500}
-                  className="bg-ui-bg-base"
                 />
                 <div className="flex flex-wrap items-center gap-2">
                   {review.status !== "approved" && (
                     <Button
                       size="small"
-                      isLoading={moderate.isPending}
+                      disabled={isBusy}
+                      isLoading={moderate.isPending && moderate.variables === "approved"}
                       onClick={() => moderate.mutate("approved")}
                     >
                       {t("reviews.actions.approve")}
@@ -269,7 +293,8 @@ export const ReviewDrawer = ({
                     <Button
                       size="small"
                       variant="secondary"
-                      isLoading={moderate.isPending}
+                      disabled={isBusy}
+                      isLoading={moderate.isPending && moderate.variables === "rejected"}
                       onClick={() => moderate.mutate("rejected")}
                     >
                       {t("reviews.actions.reject")}
@@ -278,6 +303,7 @@ export const ReviewDrawer = ({
                   <Button
                     size="small"
                     variant="danger"
+                    disabled={isBusy}
                     onClick={() => setConfirmDelete(true)}
                     className="ml-auto"
                   >
@@ -288,27 +314,26 @@ export const ReviewDrawer = ({
               </div>
 
               {/* Store Reply Box */}
-              <div className="p-4 rounded-xl border border-ui-border-base bg-ui-bg-subtle/30 flex flex-col gap-3">
-                <div>
-                  <Text size="small" weight="plus" className="text-ui-fg-base">
+              <div className="border-ui-border-base bg-ui-bg-subtle flex flex-col gap-3 rounded-lg border p-4">
+                <div className="flex flex-col gap-y-1">
+                  <Label htmlFor="review-store-reply" size="small" weight="plus">
                     {t("reviews.drawer.reply")}
-                  </Text>
-                  <Text size="xsmall" className="text-ui-fg-muted mt-0.5">
-                    {t("reviews.drawer.replyHint")}
-                  </Text>
+                  </Label>
+                  <Hint>{t("reviews.drawer.replyHint")}</Hint>
                 </div>
                 <Textarea
+                  id="review-store-reply"
                   rows={3}
                   value={reply}
+                  disabled={isBusy}
                   onChange={(e) => setReply(e.target.value)}
                   maxLength={5000}
-                  className="bg-ui-bg-base"
                 />
                 <div className="flex flex-wrap items-center justify-between gap-2">
                   <div className="flex items-center gap-2">
                     <Button
                       size="small"
-                      disabled={!reply.trim() || reply.trim() === (review.reply?.body ?? "")}
+                      disabled={isBusy || !reply.trim() || reply.trim() === (review.reply?.body ?? "")}
                       isLoading={saveReply.isPending}
                       onClick={() => saveReply.mutate()}
                     >
@@ -318,6 +343,7 @@ export const ReviewDrawer = ({
                       <Button
                         size="small"
                         variant="transparent"
+                        disabled={isBusy}
                         isLoading={removeReply.isPending}
                         onClick={() => removeReply.mutate()}
                       >
@@ -326,8 +352,9 @@ export const ReviewDrawer = ({
                     )}
                   </div>
                   {review.reply && (
-                    <Text size="xsmall" className="text-ui-fg-muted">
-                      {review.reply.author_name ?? ""} · {formatDateTime(review.reply.updated_at ?? review.reply.created_at, l)}
+                    <Text size="xsmall" leading="compact" className="text-ui-fg-muted">
+                      {review.reply.author_name ?? ""} ·{" "}
+                      {formatDateTime(review.reply.updated_at ?? review.reply.created_at, l)}
                     </Text>
                   )}
                 </div>
@@ -337,9 +364,11 @@ export const ReviewDrawer = ({
         </Drawer.Body>
 
         <Drawer.Footer>
-          <Button variant="secondary" size="small" onClick={onClose}>
-            {t("reviews.actions.close")}
-          </Button>
+          <Drawer.Close asChild>
+            <Button variant="secondary" size="small">
+              {t("reviews.actions.close")}
+            </Button>
+          </Drawer.Close>
         </Drawer.Footer>
       </Drawer.Content>
 
@@ -347,11 +376,13 @@ export const ReviewDrawer = ({
         <Prompt.Content>
           <Prompt.Header>
             <Prompt.Title>{t("reviews.confirmDelete.title")}</Prompt.Title>
-            <Prompt.Description>{t("reviews.confirmDelete.body", { count: 1 })}</Prompt.Description>
+            <Prompt.Description>
+              {t("reviews.confirmDelete.body", { count: 1 })}
+            </Prompt.Description>
           </Prompt.Header>
           <Prompt.Footer>
-            <Prompt.Cancel>{t("reviews.actions.cancel")}</Prompt.Cancel>
-            <Prompt.Action onClick={() => remove.mutate()}>
+            <Prompt.Cancel disabled={remove.isPending}>{t("reviews.actions.cancel")}</Prompt.Cancel>
+            <Prompt.Action disabled={remove.isPending} onClick={() => remove.mutate()}>
               {t("reviews.actions.delete")}
             </Prompt.Action>
           </Prompt.Footer>

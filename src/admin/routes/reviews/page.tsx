@@ -1,29 +1,39 @@
 import { defineRouteConfig } from "@medusajs/admin-sdk"
-import { Photo, Star } from "@medusajs/icons"
+import { CheckCircle, Eye, Photo, Star, Trash, XCircle } from "@medusajs/icons"
 import {
+  Alert,
   Badge,
   Button,
-  Checkbox,
   Container,
+  createDataTableColumnHelper,
+  createDataTableCommandHelper,
+  createDataTableFilterHelper,
+  DataTable,
+  type DataTableFilteringState,
+  type DataTablePaginationState,
+  type DataTableRowSelectionState,
+  type DataTableSortingState,
+  FocusModal,
   Heading,
+  Hint,
   Input,
+  Label,
   Prompt,
-  Select,
-  Table,
   Tabs,
   Text,
   toast,
+  useDataTable,
 } from "@medusajs/ui"
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
-import { useEffect, useState } from "react"
+import { useEffect, useMemo, useState } from "react"
 import { useTranslation } from "react-i18next"
 import { Link, useSearchParams } from "react-router-dom"
 import { CreditFooter } from "../../components/credit-footer"
 import { ReviewDrawer } from "../../components/review-drawer"
-import { Loading } from "../../components/states"
 import { Stars } from "../../components/stars"
 import { StatusBadge } from "../../components/status-badge"
 import {
+  type AdminReview,
   batchReviews,
   CONFIG_KEY,
   formatDateTime,
@@ -34,8 +44,9 @@ import {
   listRequests,
   listReviews,
   REQUESTS_KEY,
-  REVIEWS_KEY,
   type ReviewFilters,
+  type ReviewRequest,
+  REVIEWS_KEY,
   type ReviewStatus,
   scheduleRequest,
   sendRequest,
@@ -43,6 +54,39 @@ import {
 } from "../../lib/api"
 
 const PAGE_SIZE = 20
+
+const reviewColumnHelper = createDataTableColumnHelper<AdminReview>()
+const reviewFilterHelper = createDataTableFilterHelper<AdminReview>()
+const reviewCommandHelper = createDataTableCommandHelper()
+
+const requestColumnHelper = createDataTableColumnHelper<ReviewRequest>()
+const requestFilterHelper = createDataTableFilterHelper<ReviewRequest>()
+
+function sortParamToState(sortParam: string | null): DataTableSortingState | null {
+  if (!sortParam || sortParam === "-created_at") {
+    return { id: "created_at", desc: true }
+  }
+  if (sortParam === "created_at") {
+    return { id: "created_at", desc: false }
+  }
+  if (sortParam === "-rating") {
+    return { id: "rating", desc: true }
+  }
+  if (sortParam === "rating") {
+    return { id: "rating", desc: false }
+  }
+  return { id: "created_at", desc: true }
+}
+
+function sortStateToParam(state: DataTableSortingState): string | null {
+  if (state.id === "rating") {
+    return state.desc ? "-rating" : "rating"
+  }
+  if (state.id === "created_at") {
+    return state.desc ? null : "created_at"
+  }
+  return null
+}
 
 const ReviewsPage = () => {
   const { t } = useTranslation()
@@ -58,24 +102,17 @@ const ReviewsPage = () => {
   return (
     <div className="flex flex-col gap-y-3">
       <Tabs value={tab} onValueChange={setTab}>
-        <Container className="divide-y divide-ui-border-base p-0 overflow-hidden">
-          {/* Header */}
+        <Container className="divide-y p-0">
           <div className="flex flex-wrap items-center justify-between gap-4 px-6 py-4">
-            <div>
-              <Heading level="h1" className="text-ui-fg-base text-lg font-semibold">
-                {t("reviews.title")}
-              </Heading>
-              <Text size="small" className="text-ui-fg-subtle mt-0.5">
+            <div className="flex flex-col gap-y-1">
+              <Heading level="h1">{t("reviews.title")}</Heading>
+              <Text size="small" leading="compact" className="text-ui-fg-subtle">
                 {t("reviews.description")}
               </Text>
             </div>
-            <Tabs.List className="border border-ui-border-base bg-ui-bg-subtle p-0.5 rounded-lg">
-              <Tabs.Trigger value="reviews" className="px-3 py-1.5 text-xs font-medium">
-                {t("reviews.tabs.reviews")}
-              </Tabs.Trigger>
-              <Tabs.Trigger value="requests" className="px-3 py-1.5 text-xs font-medium">
-                {t("reviews.tabs.requests")}
-              </Tabs.Trigger>
+            <Tabs.List>
+              <Tabs.Trigger value="reviews">{t("reviews.tabs.reviews")}</Tabs.Trigger>
+              <Tabs.Trigger value="requests">{t("reviews.tabs.requests")}</Tabs.Trigger>
             </Tabs.List>
           </div>
 
@@ -109,26 +146,32 @@ const ReviewsTab = () => {
   }
 
   const [search, setSearch] = useState(filters.q ?? "")
-  const [offset, setOffset] = useState(0)
-  const [selected, setSelected] = useState<Set<string>>(new Set())
+  const [pagination, setPagination] = useState<DataTablePaginationState>({
+    pageIndex: 0,
+    pageSize: PAGE_SIZE,
+  })
+  const [rowSelection, setRowSelection] = useState<DataTableRowSelectionState>({})
   const [open, setOpen] = useState<string | null>(params.get("review"))
-  const [confirmDelete, setConfirmDelete] = useState(false)
+  const [deleteIds, setDeleteIds] = useState<string[] | null>(null)
+
+  const offset = pagination.pageIndex * pagination.pageSize
 
   const setFilter = (k: string, v: string | null) => {
     const next = new URLSearchParams(params)
     if (v) next.set(k, v)
     else next.delete(k)
     setParams(next, { replace: true })
-    setOffset(0)
-    setSelected(new Set())
+    setPagination((prev) => ({ ...prev, pageIndex: 0 }))
+    setRowSelection({})
   }
 
   useEffect(() => {
-    const h = setTimeout(
-      () => (search !== (filters.q ?? "") ? setFilter("q", search.trim() || null) : undefined),
-      350
-    )
-    return () => clearTimeout(h)
+    const qParam = params.get("q") ?? ""
+    if (search === qParam) return
+    const handle = setTimeout(() => {
+      setFilter("q", search.trim() || null)
+    }, 300)
+    return () => clearTimeout(handle)
   }, [search])
 
   const { data: config } = useQuery({ queryKey: CONFIG_KEY, queryFn: getConfig, staleTime: Infinity })
@@ -139,323 +182,398 @@ const ReviewsTab = () => {
   })
   const { data, isLoading, isError } = useQuery({
     queryKey: [...REVIEWS_KEY, "list", filters, offset],
-    queryFn: () => listReviews(filters, offset, PAGE_SIZE),
+    queryFn: () => listReviews(filters, offset, pagination.pageSize),
     placeholderData: keepPreviousData,
     refetchInterval: 30_000,
   })
 
   const rows = data?.reviews ?? []
   const count = data?.count ?? 0
-  const allOnPage = rows.length > 0 && rows.every((r) => selected.has(r.id))
 
   const bulk = useMutation({
-    mutationFn: (body: { status?: "approved" | "rejected"; delete?: boolean }) =>
-      batchReviews({ ids: [...selected], ...body }),
+    mutationFn: (body: { ids: string[]; status?: "approved" | "rejected"; delete?: boolean }) =>
+      batchReviews(body),
     onSuccess: (_r, body) => {
       toast.success(
         body.delete
-          ? t("reviews.toast.deletedMany", { count: selected.size })
-          : t(`reviews.toast.${body.status}Many`, { count: selected.size })
+          ? t("reviews.toast.deletedMany", { count: body.ids.length })
+          : t(`reviews.toast.${body.status}Many`, { count: body.ids.length })
       )
-      setSelected(new Set())
+      setRowSelection({})
+      setDeleteIds(null)
       qc.invalidateQueries({ queryKey: KEY })
     },
     onError: (e: Error) => toast.error(e.message),
   })
 
-  const toggle = (id: string) =>
-    setSelected((s) => {
-      const n = new Set(s)
-      if (n.has(id)) n.delete(id)
-      else n.add(id)
-      return n
-    })
+  const filteringState = useMemo<DataTableFilteringState>(() => {
+    const state: DataTableFilteringState = {}
+    if (filters.rating) state.rating = String(filters.rating)
+    if (filters.has_images) state.photos = "1"
+    return state
+  }, [filters.rating, filters.has_images])
+
+  const handleFilteringChange = (nextState: DataTableFilteringState) => {
+    const next = new URLSearchParams(params)
+    const nextRating = typeof nextState.rating === "string" && nextState.rating ? nextState.rating : null
+    const nextPhotos = nextState.photos === "1" ? "1" : null
+    if (nextRating) next.set("rating", nextRating)
+    else next.delete("rating")
+    if (nextPhotos) next.set("photos", nextPhotos)
+    else next.delete("photos")
+    setParams(next, { replace: true })
+    setPagination((prev) => ({ ...prev, pageIndex: 0 }))
+    setRowSelection({})
+  }
+
+  const sortingState = useMemo(
+    () => sortParamToState(params.get("sort")),
+    [params]
+  )
+
+  const handleSortingChange = (nextSort: DataTableSortingState) => {
+    setFilter("sort", sortStateToParam(nextSort))
+  }
+
+  const columns = useMemo(
+    () => [
+      reviewColumnHelper.select(),
+      reviewColumnHelper.accessor("status", {
+        header: t("reviews.columns.status"),
+        cell: ({ getValue }) => <StatusBadge status={getValue()} />,
+      }),
+      reviewColumnHelper.accessor("rating", {
+        header: t("reviews.columns.rating"),
+        enableSorting: true,
+        sortLabel: t("reviews.columns.rating"),
+        sortAscLabel: t("reviews.sort.lowest"),
+        sortDescLabel: t("reviews.sort.highest"),
+        cell: ({ row }) => {
+          const r = row.original
+          return (
+            <div className="flex items-center gap-1.5">
+              <Stars rating={r.rating} />
+              {r.images.length > 0 && (
+                <Badge size="2xsmall" color="grey" title={`${r.images.length} photos`}>
+                  <Photo className="h-3 w-3" />
+                  <span>{r.images.length}</span>
+                </Badge>
+              )}
+            </div>
+          )
+        },
+      }),
+      reviewColumnHelper.accessor("body", {
+        header: t("reviews.columns.review"),
+        truncateTooltip: false,
+        cell: ({ row }) => {
+          const r = row.original
+          return (
+            <div className="flex max-w-md flex-col gap-0.5 py-1.5">
+              {r.title && (
+                <Text size="small" leading="compact" weight="plus" className="text-ui-fg-base truncate">
+                  {r.title}
+                </Text>
+              )}
+              <Text size="small" leading="compact" className="text-ui-fg-subtle truncate">
+                {r.body}
+              </Text>
+              {r.reply && (
+                <div className="mt-1 flex items-center gap-1.5">
+                  <Badge size="2xsmall" color="grey">
+                    {t("reviews.replied")}
+                  </Badge>
+                  <Text as="span" size="xsmall" leading="compact" className="text-ui-fg-muted truncate italic">
+                    "{r.reply.body}"
+                  </Text>
+                </div>
+              )}
+            </div>
+          )
+        },
+      }),
+      reviewColumnHelper.accessor((r) => r.product_title ?? r.product_id, {
+        id: "product",
+        header: t("reviews.columns.product"),
+        cell: ({ getValue }) => getValue(),
+      }),
+      reviewColumnHelper.accessor("display_name", {
+        header: t("reviews.columns.customer"),
+        truncateTooltip: false,
+        cell: ({ row }) => {
+          const r = row.original
+          return (
+            <div className="flex flex-col">
+              <Text size="small" leading="compact" weight="plus" className="text-ui-fg-base truncate">
+                {r.display_name}
+              </Text>
+              {r.email && (
+                <Text size="xsmall" leading="compact" className="text-ui-fg-muted truncate">
+                  {r.email}
+                </Text>
+              )}
+            </div>
+          )
+        },
+      }),
+      reviewColumnHelper.accessor("created_at", {
+        header: t("reviews.columns.date"),
+        align: "right",
+        enableSorting: true,
+        sortLabel: t("reviews.columns.date"),
+        sortAscLabel: t("reviews.sort.oldest"),
+        sortDescLabel: t("reviews.sort.newest"),
+        cell: ({ getValue }) => (
+          <Text as="span" size="xsmall" leading="compact" className="text-ui-fg-muted whitespace-nowrap">
+            {formatDateTime(getValue(), l)}
+          </Text>
+        ),
+      }),
+      reviewColumnHelper.action({
+        actions: ({ row }) => {
+          const r = row.original
+          const moderationActions = [
+            {
+              label: t("reviews.actions.view"),
+              icon: <Eye />,
+              onClick: () => setOpen(r.id),
+            },
+            ...(r.status !== "approved"
+              ? [
+                  {
+                    label: t("reviews.actions.approve"),
+                    icon: <CheckCircle />,
+                    onClick: () => bulk.mutate({ ids: [r.id], status: "approved" }),
+                  },
+                ]
+              : []),
+            ...(r.status !== "rejected"
+              ? [
+                  {
+                    label: t("reviews.actions.reject"),
+                    icon: <XCircle />,
+                    onClick: () => bulk.mutate({ ids: [r.id], status: "rejected" }),
+                  },
+                ]
+              : []),
+          ]
+          return [
+            moderationActions,
+            [
+              {
+                label: t("reviews.actions.delete"),
+                icon: <Trash />,
+                onClick: () => setDeleteIds([r.id]),
+              },
+            ],
+          ]
+        },
+      }),
+    ],
+    [t, l, bulk]
+  )
+
+  const tableFilters = useMemo(
+    () => [
+      reviewFilterHelper.accessor("rating", {
+        type: "radio",
+        label: t("reviews.filters.rating"),
+        options: [5, 4, 3, 2, 1].map((n) => ({
+          label: t("reviews.filters.stars", { count: n }),
+          value: String(n),
+        })),
+      }),
+      reviewFilterHelper.custom({
+        id: "photos",
+        type: "radio",
+        label: t("reviews.filters.photos"),
+        options: [{ label: t("reviews.filters.withPhotos"), value: "1" }],
+      }),
+    ],
+    [t]
+  )
+
+  const commands = useMemo(
+    () => [
+      reviewCommandHelper.command({
+        label: t("reviews.actions.approve"),
+        shortcut: "a",
+        action: async (selection) => {
+          const ids = Object.keys(selection)
+          if (ids.length) await bulk.mutateAsync({ ids, status: "approved" })
+        },
+      }),
+      reviewCommandHelper.command({
+        label: t("reviews.actions.reject"),
+        shortcut: "r",
+        action: async (selection) => {
+          const ids = Object.keys(selection)
+          if (ids.length) await bulk.mutateAsync({ ids, status: "rejected" })
+        },
+      }),
+      reviewCommandHelper.command({
+        label: t("reviews.actions.delete"),
+        shortcut: "d",
+        action: (selection) => {
+          const ids = Object.keys(selection)
+          if (ids.length) setDeleteIds(ids)
+        },
+      }),
+    ],
+    [t, bulk]
+  )
+
+  const table = useDataTable({
+    data: rows,
+    columns,
+    getRowId: (row) => row.id,
+    rowCount: count,
+    isLoading,
+    autoResetPageIndex: false,
+    filters: tableFilters,
+    commands,
+    filtering: {
+      state: filteringState,
+      onFilteringChange: handleFilteringChange,
+    },
+    sorting: {
+      state: sortingState,
+      onSortingChange: handleSortingChange,
+    },
+    search: {
+      state: search,
+      onSearchChange: (val) => {
+        setSearch(val)
+        setPagination((prev) => ({ ...prev, pageIndex: 0 }))
+        setRowSelection({})
+      },
+    },
+    pagination: {
+      state: pagination,
+      onPaginationChange: setPagination,
+    },
+    rowSelection: {
+      state: rowSelection,
+      onRowSelectionChange: setRowSelection,
+    },
+    onRowClick: (_e, row) => setOpen(row.id),
+  })
 
   const STATUS_ITEMS = [
     { key: "all", label: t("reviews.summary.all") },
-    { key: "pending", label: t("reviews.summary.pending"), countColor: "orange" },
-    { key: "approved", label: t("reviews.summary.approved"), countColor: "green" },
-    { key: "rejected", label: t("reviews.summary.rejected"), countColor: "grey" },
+    { key: "pending", label: t("reviews.summary.pending") },
+    { key: "approved", label: t("reviews.summary.approved") },
+    { key: "rejected", label: t("reviews.summary.rejected") },
   ] as const
 
+  const activeStatus = filters.status ?? "all"
+
   return (
-    <div className="divide-y divide-ui-border-base">
-      {/* Sleek status pill filter */}
-      <div className="flex flex-wrap items-center justify-between gap-3 px-6 py-3 bg-ui-bg-subtle/40">
-        <div className="inline-flex items-center gap-1 p-1 bg-ui-bg-subtle rounded-lg border border-ui-border-base">
-          {STATUS_ITEMS.map((item) => {
-            const isActive = item.key === "all" ? !filters.status : filters.status === item.key
-            const countVal = item.key === "all" ? stats?.total ?? 0 : stats?.[item.key] ?? 0
-            return (
-              <button
-                key={item.key}
-                type="button"
-                onClick={() => setFilter("status", item.key === "all" || filters.status === item.key ? null : item.key)}
-                className={`inline-flex items-center gap-2 px-3 py-1 rounded-md text-xs font-medium transition-all ${
-                  isActive
-                    ? "bg-ui-bg-base text-ui-fg-base shadow-borders-base font-semibold"
-                    : "text-ui-fg-subtle hover:text-ui-fg-base hover:bg-ui-bg-base/60"
-                }`}
-              >
-                <span>{item.label}</span>
-                <span
-                  className={`px-1.5 py-0.2 rounded-full text-[11px] font-mono leading-tight ${
-                    item.key === "pending" && countVal > 0
-                      ? "bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300 font-semibold"
-                      : isActive
-                        ? "bg-ui-bg-subtle text-ui-fg-subtle"
-                        : "text-ui-fg-muted"
-                  }`}
-                >
-                  {countVal}
-                </span>
-              </button>
-            )
-          })}
-        </div>
-
-        {config?.auto_approve && (
-          <Badge size="2xsmall" color="blue">
-            {t("reviews.autoApproveOn")}
-          </Badge>
-        )}
-      </div>
-
-      {/* Filter toolbar */}
-      <div className="flex flex-wrap items-center gap-2 px-6 py-3">
-        <Input
-          size="small"
-          type="search"
-          placeholder={t("reviews.search")}
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-          className="w-full sm:w-60"
-        />
-        <Select
-          size="small"
-          value={filters.rating ? String(filters.rating) : "all"}
-          onValueChange={(v) => setFilter("rating", v === "all" ? null : v)}
+    <div className="divide-y">
+      {/* Status Summary Tabs & Scoped Context */}
+      <div className="flex flex-wrap items-center justify-between gap-2 px-6 py-3">
+        <Tabs
+          value={activeStatus}
+          onValueChange={(v) => setFilter("status", v === "all" ? null : v)}
         >
-          <Select.Trigger className="w-32">
-            <Select.Value />
-          </Select.Trigger>
-          <Select.Content>
-            <Select.Item value="all">{t("reviews.filters.anyRating")}</Select.Item>
-            {[5, 4, 3, 2, 1].map((n) => (
-              <Select.Item key={n} value={String(n)}>
-                {t("reviews.filters.stars", { count: n })}
-              </Select.Item>
-            ))}
-          </Select.Content>
-        </Select>
+          <Tabs.List>
+            {STATUS_ITEMS.map((item) => {
+              const countVal = item.key === "all" ? stats?.total ?? 0 : stats?.[item.key] ?? 0
+              const color = item.key === "pending" && countVal > 0 ? "orange" : "grey"
+              return (
+                <Tabs.Trigger key={item.key} value={item.key} className="gap-x-1.5">
+                  <span>{item.label}</span>
+                  <Badge size="2xsmall" rounded="full" color={color}>
+                    {countVal}
+                  </Badge>
+                </Tabs.Trigger>
+              )
+            })}
+          </Tabs.List>
+        </Tabs>
 
-        <Select
-          size="small"
-          value={filters.has_images ? "1" : "all"}
-          onValueChange={(v) => setFilter("photos", v === "all" ? null : v)}
-        >
-          <Select.Trigger className="w-40">
-            <Select.Value />
-          </Select.Trigger>
-          <Select.Content>
-            <Select.Item value="all">{t("reviews.filters.withOrWithoutPhotos")}</Select.Item>
-            <Select.Item value="1">{t("reviews.filters.withPhotos")}</Select.Item>
-          </Select.Content>
-        </Select>
-
-        <Select
-          size="small"
-          value={filters.order ?? "-created_at"}
-          onValueChange={(v) => setFilter("sort", v === "-created_at" ? null : v)}
-        >
-          <Select.Trigger className="w-36">
-            <Select.Value />
-          </Select.Trigger>
-          <Select.Content>
-            <Select.Item value="-created_at">{t("reviews.sort.newest")}</Select.Item>
-            <Select.Item value="created_at">{t("reviews.sort.oldest")}</Select.Item>
-            <Select.Item value="-rating">{t("reviews.sort.highest")}</Select.Item>
-            <Select.Item value="rating">{t("reviews.sort.lowest")}</Select.Item>
-          </Select.Content>
-        </Select>
-
-        {(filters.product_id || filters.order_id) && (
-          <Button
-            size="small"
-            variant="secondary"
-            onClick={() => {
-              setFilter("product_id", null)
-              setFilter("order_id", null)
-            }}
-          >
-            {filters.product_id ? t("reviews.filters.clearProduct") : t("reviews.filters.clearOrder")}
-          </Button>
-        )}
-      </div>
-
-      {/* Bulk actions bar */}
-      {selected.size > 0 && (
-        <div className="bg-ui-bg-subtle border-y border-ui-border-base flex flex-wrap items-center justify-between gap-2 px-6 py-2.5">
-          <Text size="small" weight="plus" className="text-ui-fg-base">
-            {t("reviews.selected", { count: selected.size })}
-          </Text>
-          <div className="flex items-center gap-2">
-            <Button
-              size="small"
-              isLoading={bulk.isPending}
-              onClick={() => bulk.mutate({ status: "approved" })}
-            >
-              {t("reviews.actions.approve")}
-            </Button>
+        <div className="flex items-center gap-2">
+          {config?.auto_approve && (
+            <Badge size="2xsmall" color="blue">
+              {t("reviews.autoApproveOn")}
+            </Badge>
+          )}
+          {(filters.product_id || filters.order_id) && (
             <Button
               size="small"
               variant="secondary"
-              isLoading={bulk.isPending}
-              onClick={() => bulk.mutate({ status: "rejected" })}
+              onClick={() => {
+                setFilter("product_id", null)
+                setFilter("order_id", null)
+              }}
             >
-              {t("reviews.actions.reject")}
+              {filters.product_id ? t("reviews.filters.clearProduct") : t("reviews.filters.clearOrder")}
             </Button>
-            <Button
-              size="small"
-              variant="danger"
-              onClick={() => setConfirmDelete(true)}
-            >
-              {t("reviews.actions.delete")}
-            </Button>
-            <Button
-              size="small"
-              variant="transparent"
-              onClick={() => setSelected(new Set())}
-            >
-              {t("reviews.actions.clearSelection")}
-            </Button>
+          )}
+        </div>
+      </div>
+
+      {/* Official DataTable */}
+      <DataTable instance={table}>
+        <DataTable.Toolbar
+          className="flex flex-col items-start justify-between gap-2 md:flex-row md:items-center"
+          translations={{ clearAll: t("reviews.filters.clearAll") }}
+        >
+          <DataTable.FilterMenu tooltip={t("reviews.filters.tooltip")} />
+          <div className="flex w-full items-center gap-x-2 md:w-auto">
+            <DataTable.Search placeholder={t("reviews.search")} />
+            <DataTable.SortingMenu tooltip={t("reviews.sort.tooltip")} />
           </div>
-        </div>
-      )}
+        </DataTable.Toolbar>
 
-      {/* Main Reviews Table */}
-      {isLoading ? (
-        <Loading />
-      ) : isError ? (
-        <div className="px-6 py-12 text-center text-ui-fg-error">
-          <Text>{t("reviews.loadError")}</Text>
-        </div>
-      ) : rows.length === 0 ? (
-        <div className="px-6 py-12 text-center text-ui-fg-subtle">
-          <Text>{t("reviews.empty")}</Text>
-        </div>
-      ) : (
-        <Table>
-          <Table.Header>
-            <Table.Row>
-              <Table.HeaderCell className="w-12 pl-6">
-                <Checkbox
-                  checked={allOnPage}
-                  onCheckedChange={() => setSelected(allOnPage ? new Set() : new Set(rows.map((r) => r.id)))}
-                />
-              </Table.HeaderCell>
-              <Table.HeaderCell className="w-28">Status</Table.HeaderCell>
-              <Table.HeaderCell className="w-28">Rating</Table.HeaderCell>
-              <Table.HeaderCell>Review</Table.HeaderCell>
-              <Table.HeaderCell className="w-44">Product</Table.HeaderCell>
-              <Table.HeaderCell className="w-36">Customer</Table.HeaderCell>
-              <Table.HeaderCell className="w-32 pr-6 text-right">Date</Table.HeaderCell>
-            </Table.Row>
-          </Table.Header>
-          <Table.Body>
-            {rows.map((r) => (
-              <Table.Row
-                key={r.id}
-                className="cursor-pointer transition-colors hover:bg-ui-bg-base-hover"
-                onClick={() => setOpen(r.id)}
-              >
-                <Table.Cell className="w-12 pl-6" onClick={(e) => e.stopPropagation()}>
-                  <Checkbox checked={selected.has(r.id)} onCheckedChange={() => toggle(r.id)} />
-                </Table.Cell>
-                <Table.Cell>
-                  <StatusBadge status={r.status} />
-                </Table.Cell>
-                <Table.Cell>
-                  <div className="flex items-center gap-1.5">
-                    <Stars rating={r.rating} />
-                    {r.images.length > 0 && (
-                      <span className="inline-flex items-center gap-0.5 text-ui-fg-muted" title={`${r.images.length} photos`}>
-                        <Photo width={13} height={13} />
-                        <span className="text-[11px] font-mono">{r.images.length}</span>
-                      </span>
-                    )}
-                  </div>
-                </Table.Cell>
-                <Table.Cell>
-                  <div className="flex flex-col gap-0.5 max-w-lg py-1">
-                    {r.title && (
-                      <Text size="small" weight="plus" className="text-ui-fg-base truncate">
-                        {r.title}
-                      </Text>
-                    )}
-                    <Text size="small" className="text-ui-fg-subtle line-clamp-1">
-                      {r.body}
-                    </Text>
-                    {r.reply && (
-                      <div className="mt-1 flex items-center gap-1.5">
-                        <Badge size="2xsmall" color="grey">{t("reviews.replied")}</Badge>
-                        <span className="text-[11px] text-ui-fg-muted line-clamp-1 italic">
-                          "{r.reply.body}"
-                        </span>
-                      </div>
-                    )}
-                  </div>
-                </Table.Cell>
-                <Table.Cell>
-                  <Text size="small" className="text-ui-fg-base truncate max-w-[170px]" title={r.product_title ?? r.product_id}>
-                    {r.product_title ?? r.product_id}
-                  </Text>
-                </Table.Cell>
-                <Table.Cell>
-                  <div className="flex flex-col">
-                    <Text size="small" weight="plus" className="text-ui-fg-base">
-                      {r.display_name}
-                    </Text>
-                    {r.email && (
-                      <Text size="xsmall" className="text-ui-fg-muted truncate max-w-[140px]">
-                        {r.email}
-                      </Text>
-                    )}
-                  </div>
-                </Table.Cell>
-                <Table.Cell className="pr-6 text-right">
-                  <Text size="xsmall" className="text-ui-fg-muted whitespace-nowrap">
-                    {formatDateTime(r.created_at, l)}
-                  </Text>
-                </Table.Cell>
-              </Table.Row>
-            ))}
-          </Table.Body>
-        </Table>
-      )}
+        {isError ? (
+          <div className="px-6 py-6">
+            <Alert variant="error">{t("reviews.loadError")}</Alert>
+          </div>
+        ) : (
+          <DataTable.Table
+            emptyState={{
+              empty: {
+                heading: t("reviews.emptyHeading"),
+                description: t("reviews.emptyDescription"),
+              },
+              filtered: {
+                heading: t("reviews.emptyFilteredHeading"),
+                description: t("reviews.emptyFilteredDescription"),
+              },
+            }}
+          />
+        )}
 
-      {/* Pagination */}
-      <Table.Pagination
-        count={count}
-        pageSize={PAGE_SIZE}
-        pageIndex={Math.floor(offset / PAGE_SIZE)}
-        pageCount={Math.ceil(count / PAGE_SIZE) || 1}
-        canPreviousPage={offset > 0}
-        canNextPage={offset + PAGE_SIZE < count}
-        previousPage={() => setOffset(Math.max(0, offset - PAGE_SIZE))}
-        nextPage={() => setOffset(offset + PAGE_SIZE)}
-      />
+        <DataTable.CommandBar selectedLabel={(n) => t("reviews.selected", { count: n })} />
+        <DataTable.Pagination
+          translations={{
+            of: t("reviews.paginationLabels.of"),
+            results: t("reviews.paginationLabels.results"),
+            pages: t("reviews.paginationLabels.pages"),
+            prev: t("reviews.prev"),
+            next: t("reviews.next"),
+          }}
+        />
+      </DataTable>
 
       <ReviewDrawer id={open} onClose={() => setOpen(null)} />
-      <Prompt open={confirmDelete} onOpenChange={setConfirmDelete}>
+      <Prompt open={!!deleteIds} onOpenChange={(v) => !v && setDeleteIds(null)}>
         <Prompt.Content>
           <Prompt.Header>
             <Prompt.Title>{t("reviews.confirmDelete.title")}</Prompt.Title>
-            <Prompt.Description>{t("reviews.confirmDelete.body", { count: selected.size })}</Prompt.Description>
+            <Prompt.Description>
+              {t("reviews.confirmDelete.body", { count: deleteIds?.length ?? 0 })}
+            </Prompt.Description>
           </Prompt.Header>
           <Prompt.Footer>
-            <Prompt.Cancel>{t("reviews.actions.cancel")}</Prompt.Cancel>
-            <Prompt.Action onClick={() => bulk.mutate({ delete: true })}>{t("reviews.actions.delete")}</Prompt.Action>
+            <Prompt.Cancel disabled={bulk.isPending}>{t("reviews.actions.cancel")}</Prompt.Cancel>
+            <Prompt.Action
+              disabled={bulk.isPending}
+              onClick={() => deleteIds && bulk.mutate({ ids: deleteIds, delete: true })}
+            >
+              {t("reviews.actions.delete")}
+            </Prompt.Action>
           </Prompt.Footer>
         </Prompt.Content>
       </Prompt>
@@ -469,14 +587,23 @@ const RequestsTab = () => {
   const { t, i18n } = useTranslation()
   const l = lang(i18n.language)
   const qc = useQueryClient()
-  const [status, setStatus] = useState("all")
-  const [offset, setOffset] = useState(0)
+  const [filtering, setFiltering] = useState<DataTableFilteringState>({})
+  const [pagination, setPagination] = useState<DataTablePaginationState>({
+    pageIndex: 0,
+    pageSize: PAGE_SIZE,
+  })
+  const [scheduleOpen, setScheduleOpen] = useState(false)
   const [orderId, setOrderId] = useState("")
+  const [sendMode, setSendMode] = useState<"schedule" | "send" | null>(null)
+
+  const statusFilter =
+    typeof filtering.status === "string" && filtering.status ? filtering.status : undefined
+  const offset = pagination.pageIndex * pagination.pageSize
 
   const { data: config } = useQuery({ queryKey: CONFIG_KEY, queryFn: getConfig, staleTime: Infinity })
-  const { data, isLoading } = useQuery({
-    queryKey: [...REQUESTS_KEY, status, offset],
-    queryFn: () => listRequests({ status: status === "all" ? undefined : status }, offset, PAGE_SIZE),
+  const { data, isLoading, isError } = useQuery({
+    queryKey: [...REQUESTS_KEY, statusFilter ?? "all", offset],
+    queryFn: () => listRequests({ status: statusFilter }, offset, pagination.pageSize),
     placeholderData: keepPreviousData,
     refetchInterval: 30_000,
   })
@@ -497,154 +624,277 @@ const RequestsTab = () => {
   })
 
   const schedule = useMutation({
-    mutationFn: (sendNow: boolean) => scheduleRequest(orderId.trim(), sendNow),
+    mutationFn: (sendNow: boolean) => {
+      setSendMode(sendNow ? "send" : "schedule")
+      return scheduleRequest(orderId.trim(), sendNow)
+    },
     onSuccess: (r) => {
       toast[r.status === "scheduled" || r.status === "exists" ? "success" : "warning"](
         t(`reviews.requests.scheduleResult.${r.status}`, { defaultValue: r.status })
       )
       setOrderId("")
+      setScheduleOpen(false)
+      setSendMode(null)
       qc.invalidateQueries({ queryKey: REQUESTS_KEY })
     },
-    onError,
+    onError: (e: Error) => {
+      setSendMode(null)
+      toast.error(e.message)
+    },
+  })
+
+  const columns = useMemo(
+    () => [
+      requestColumnHelper.accessor("status", {
+        header: t("reviews.columns.status"),
+        cell: ({ getValue }) => <StatusBadge status={getValue()} kind="request" />,
+      }),
+      requestColumnHelper.accessor("email", {
+        header: t("reviews.columns.recipient"),
+        truncateTooltip: false,
+        cell: ({ row }) => {
+          const r = row.original
+          return (
+            <div className="flex flex-col py-1">
+              <Text size="small" leading="compact" weight="plus" className="text-ui-fg-base truncate">
+                {r.email}
+              </Text>
+              {r.last_error && (
+                <Text size="xsmall" leading="compact" className="text-ui-fg-error truncate">
+                  {r.last_error}
+                </Text>
+              )}
+            </div>
+          )
+        },
+      }),
+      requestColumnHelper.accessor("order_id", {
+        header: t("reviews.columns.order"),
+        truncateTooltip: false,
+        cell: ({ getValue }) => {
+          const id = getValue()
+          return (
+            <Link to={`/orders/${id}`} className="txt-compact-small text-ui-fg-interactive hover:underline">
+              {id}
+            </Link>
+          )
+        },
+      }),
+      requestColumnHelper.accessor("trigger", {
+        header: t("reviews.columns.trigger"),
+        cell: ({ row }) => {
+          const r = row.original
+          return `${t(`reviews.requests.trigger.${r.trigger}`, { defaultValue: r.trigger })} +${r.delay_days}d`
+        },
+      }),
+      requestColumnHelper.accessor("scheduled_at", {
+        header: t("reviews.columns.timeline"),
+        truncateTooltip: false,
+        cell: ({ row }) => {
+          const r = row.original
+          return (
+            <div className="flex flex-col">
+              <Text as="span" size="xsmall" leading="compact" className="text-ui-fg-muted">
+                {t("reviews.requests.scheduledAt", { date: formatDateTime(r.scheduled_at, l) })}
+              </Text>
+              {r.sent_at && (
+                <Text as="span" size="xsmall" leading="compact" className="text-ui-fg-muted">
+                  {t("reviews.requests.sentAt", { date: formatDateTime(r.sent_at, l) })}
+                </Text>
+              )}
+            </div>
+          )
+        },
+      }),
+      requestColumnHelper.display({
+        id: "actions",
+        header: () => <div className="text-right">{t("reviews.columns.actions")}</div>,
+        cell: ({ row }) => {
+          const r = row.original
+          if (!SENDABLE.has(r.status)) return null
+          return (
+            <div className="flex justify-end">
+              <Button
+                size="small"
+                variant="secondary"
+                disabled={send.isPending && send.variables === r.id}
+                isLoading={send.isPending && send.variables === r.id}
+                onClick={() => send.mutate(r.id)}
+              >
+                {r.status === "sent" ? t("reviews.requests.resend") : t("reviews.requests.sendNow")}
+              </Button>
+            </div>
+          )
+        },
+      }),
+    ],
+    [t, l, send]
+  )
+
+  const tableFilters = useMemo(
+    () => [
+      requestFilterHelper.accessor("status", {
+        type: "radio",
+        label: t("reviews.requests.statusFilter"),
+        options: ["scheduled", "sent", "used", "expired", "skipped", "failed", "opted_out"].map((s) => ({
+          label: t(`reviews.requestStatus.${s}`),
+          value: s,
+        })),
+      }),
+    ],
+    [t]
+  )
+
+  const table = useDataTable({
+    data: rows,
+    columns,
+    getRowId: (row) => row.id,
+    rowCount: count,
+    isLoading,
+    autoResetPageIndex: false,
+    filters: tableFilters,
+    filtering: {
+      state: filtering,
+      onFilteringChange: (next) => {
+        setFiltering(next)
+        setPagination((prev) => ({ ...prev, pageIndex: 0 }))
+      },
+    },
+    pagination: {
+      state: pagination,
+      onPaginationChange: setPagination,
+    },
   })
 
   const rr = config?.review_requests
 
   return (
-    <div className="divide-y divide-ui-border-base">
-      {/* Config Banner */}
-      <div className="flex flex-wrap items-center justify-between gap-2 px-6 py-3 bg-ui-bg-subtle/40">
-        <Text size="small" className="text-ui-fg-subtle">
-          {rr ? t("reviews.requests.settings", { trigger: t(`reviews.requests.trigger.${rr.trigger}`), days: rr.delay_days, ttl: rr.token_ttl_days }) : ""}
-          {rr && rr.rules > 0 ? ` ${t("reviews.requests.rules", { count: rr.rules })}` : ""}
-        </Text>
-        <div className="flex items-center gap-2">
-          {rr && !rr.enabled && <Badge size="2xsmall" color="grey">{t("reviews.requests.disabled")}</Badge>}
-          {rr && rr.enabled && !rr.link_url_configured && <Badge size="2xsmall" color="red">{t("reviews.requests.noLinkUrl")}</Badge>}
+    <div className="divide-y">
+      {rr && !rr.enabled ? (
+        <div className="px-6 py-3">
+          <Alert variant="warning">{t("reviews.requests.disabled")}</Alert>
         </div>
-      </div>
-
-      {/* Action Toolbar */}
-      <div className="flex flex-col gap-2 px-6 py-3 sm:flex-row sm:items-center">
-        <Input
-          size="small"
-          placeholder={t("reviews.requests.orderIdPlaceholder")}
-          value={orderId}
-          onChange={(e) => setOrderId(e.target.value)}
-          className="w-full sm:w-64"
-        />
-        <Button
-          size="small"
-          variant="secondary"
-          disabled={!orderId.trim()}
-          isLoading={schedule.isPending}
-          onClick={() => schedule.mutate(false)}
-        >
-          {t("reviews.requests.schedule")}
-        </Button>
-        <Button
-          size="small"
-          variant="secondary"
-          disabled={!orderId.trim()}
-          isLoading={schedule.isPending}
-          onClick={() => schedule.mutate(true)}
-        >
-          {t("reviews.requests.scheduleAndSend")}
-        </Button>
-
-        <div className="sm:ml-auto w-full sm:w-48">
-          <Select value={status} onValueChange={(v) => (setStatus(v), setOffset(0))} size="small">
-            <Select.Trigger>
-              <Select.Value />
-            </Select.Trigger>
-            <Select.Content>
-              <Select.Item value="all">{t("reviews.requests.allStatuses")}</Select.Item>
-              {["scheduled", "sent", "used", "expired", "skipped", "failed", "opted_out"].map((s) => (
-                <Select.Item key={s} value={s}>
-                  {t(`reviews.requestStatus.${s}`)}
-                </Select.Item>
-              ))}
-            </Select.Content>
-          </Select>
+      ) : rr && !rr.link_url_configured ? (
+        <div className="px-6 py-3">
+          <Alert variant="error">{t("reviews.requests.noLinkUrl")}</Alert>
         </div>
-      </div>
+      ) : null}
 
-      {/* Requests Table */}
-      {isLoading ? (
-        <Loading />
-      ) : rows.length === 0 ? (
-        <div className="px-6 py-12 text-center text-ui-fg-subtle">
-          <Text>{t("reviews.requests.empty")}</Text>
+      {rr && (
+        <div className="px-6 py-3">
+          <Text size="small" leading="compact" className="text-ui-fg-subtle">
+            {t("reviews.requests.settings", {
+              trigger: t(`reviews.requests.trigger.${rr.trigger}`),
+              days: rr.delay_days,
+              ttl: rr.token_ttl_days,
+            })}
+            {rr.rules > 0 ? ` ${t("reviews.requests.rules", { count: rr.rules })}` : ""}
+          </Text>
         </div>
-      ) : (
-        <Table>
-          <Table.Header>
-            <Table.Row>
-              <Table.HeaderCell className="w-28 pl-6">Status</Table.HeaderCell>
-              <Table.HeaderCell>Recipient</Table.HeaderCell>
-              <Table.HeaderCell>Order</Table.HeaderCell>
-              <Table.HeaderCell>Trigger</Table.HeaderCell>
-              <Table.HeaderCell>Timeline</Table.HeaderCell>
-              <Table.HeaderCell className="pr-6 text-right">Actions</Table.HeaderCell>
-            </Table.Row>
-          </Table.Header>
-          <Table.Body>
-            {rows.map((r) => (
-              <Table.Row key={r.id}>
-                <Table.Cell className="pl-6">
-                  <StatusBadge status={r.status} kind="request" />
-                </Table.Cell>
-                <Table.Cell>
-                  <Text size="small" weight="plus" className="text-ui-fg-base">
-                    {r.email}
-                  </Text>
-                  {r.last_error && <Text size="xsmall" className="text-ui-fg-error">{r.last_error}</Text>}
-                </Table.Cell>
-                <Table.Cell>
-                  <Link to={`/orders/${r.order_id}`} className="txt-compact-small text-ui-fg-interactive hover:underline">
-                    {r.order_id}
-                  </Link>
-                </Table.Cell>
-                <Table.Cell>
-                  <Text size="xsmall" className="text-ui-fg-muted">
-                    {t(`reviews.requests.trigger.${r.trigger}`, { defaultValue: r.trigger })} +{r.delay_days}d
-                  </Text>
-                </Table.Cell>
-                <Table.Cell>
-                  <div className="flex flex-col text-xs text-ui-fg-muted">
-                    <span>{t("reviews.requests.scheduledAt", { date: formatDateTime(r.scheduled_at, l) })}</span>
-                    {r.sent_at && <span>{t("reviews.requests.sentAt", { date: formatDateTime(r.sent_at, l) })}</span>}
-                  </div>
-                </Table.Cell>
-                <Table.Cell className="pr-6 text-right">
-                  {SENDABLE.has(r.status) && (
-                    <Button
-                      size="small"
-                      variant="secondary"
-                      isLoading={send.isPending && send.variables === r.id}
-                      onClick={() => send.mutate(r.id)}
-                    >
-                      {r.status === "sent" ? t("reviews.requests.resend") : t("reviews.requests.sendNow")}
-                    </Button>
-                  )}
-                </Table.Cell>
-              </Table.Row>
-            ))}
-          </Table.Body>
-        </Table>
       )}
 
-      {/* Pagination */}
-      <Table.Pagination
-        count={count}
-        pageSize={PAGE_SIZE}
-        pageIndex={Math.floor(offset / PAGE_SIZE)}
-        pageCount={Math.ceil(count / PAGE_SIZE) || 1}
-        canPreviousPage={offset > 0}
-        canNextPage={offset + PAGE_SIZE < count}
-        previousPage={() => setOffset(Math.max(0, offset - PAGE_SIZE))}
-        nextPage={() => setOffset(offset + PAGE_SIZE)}
-      />
+      <DataTable instance={table}>
+        <DataTable.Toolbar
+          className="flex flex-wrap items-center justify-between gap-2"
+          translations={{ clearAll: t("reviews.filters.clearAll") }}
+        >
+          <DataTable.FilterMenu tooltip={t("reviews.filters.tooltip")} />
+          <Button size="small" variant="secondary" onClick={() => setScheduleOpen(true)}>
+            {t("reviews.requests.scheduleButton")}
+          </Button>
+        </DataTable.Toolbar>
+
+        {isError ? (
+          <div className="px-6 py-6">
+            <Alert variant="error">{t("reviews.loadError")}</Alert>
+          </div>
+        ) : (
+          <DataTable.Table
+            emptyState={{
+              empty: {
+                heading: t("reviews.requests.emptyHeading"),
+                description: t("reviews.requests.emptyDescription"),
+              },
+              filtered: {
+                heading: t("reviews.requests.emptyFilteredHeading"),
+                description: t("reviews.requests.emptyFilteredDescription"),
+              },
+            }}
+          />
+        )}
+
+        <DataTable.Pagination
+          translations={{
+            of: t("reviews.paginationLabels.of"),
+            results: t("reviews.paginationLabels.results"),
+            pages: t("reviews.paginationLabels.pages"),
+            prev: t("reviews.prev"),
+            next: t("reviews.next"),
+          }}
+        />
+      </DataTable>
+
+      <FocusModal
+        open={scheduleOpen}
+        onOpenChange={(v) => {
+          if (!schedule.isPending) {
+            setScheduleOpen(v)
+            if (!v) setOrderId("")
+          }
+        }}
+      >
+        <FocusModal.Content>
+          <FocusModal.Header>
+            <div className="flex items-center justify-end gap-x-2">
+              <FocusModal.Close asChild>
+                <Button size="small" variant="secondary" disabled={schedule.isPending}>
+                  {t("reviews.actions.cancel")}
+                </Button>
+              </FocusModal.Close>
+              <Button
+                size="small"
+                variant="secondary"
+                disabled={!orderId.trim() || schedule.isPending}
+                isLoading={schedule.isPending && sendMode === "schedule"}
+                onClick={() => schedule.mutate(false)}
+              >
+                {t("reviews.requests.schedule")}
+              </Button>
+              <Button
+                size="small"
+                disabled={!orderId.trim() || schedule.isPending}
+                isLoading={schedule.isPending && sendMode === "send"}
+                onClick={() => schedule.mutate(true)}
+              >
+                {t("reviews.requests.scheduleAndSend")}
+              </Button>
+            </div>
+          </FocusModal.Header>
+          <FocusModal.Body className="flex flex-col items-center py-16">
+            <div className="flex w-full max-w-lg flex-col gap-y-6">
+              <div className="flex flex-col gap-y-1">
+                <Heading level="h1">{t("reviews.requests.modalTitle")}</Heading>
+                <Text size="small" leading="compact" className="text-ui-fg-subtle">
+                  {t("reviews.requests.modalDescription")}
+                </Text>
+              </div>
+              <div className="flex flex-col gap-y-2">
+                <Label htmlFor="review-request-order-id" size="small" weight="plus">
+                  {t("reviews.requests.orderIdLabel")}
+                </Label>
+                <Input
+                  id="review-request-order-id"
+                  placeholder={t("reviews.requests.orderIdPlaceholder")}
+                  value={orderId}
+                  disabled={schedule.isPending}
+                  onChange={(e) => setOrderId(e.target.value)}
+                />
+                <Hint>{t("reviews.requests.orderIdHint")}</Hint>
+              </div>
+            </div>
+          </FocusModal.Body>
+        </FocusModal.Content>
+      </FocusModal>
     </div>
   )
 }
