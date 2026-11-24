@@ -15,20 +15,21 @@ const ProductReviewsWidget = ({ data: product }: DetailWidgetProps<AdminProduct>
   const { data, isLoading } = useQuery({ queryKey: [...STATS_KEY, product.id], queryFn: () => getStats(product.id), refetchInterval: 60_000 })
   if (isLoading || !data) return null
   const rating = data.rating
+
   return (
-    <Container className="divide-y p-0">
+    <Container className="divide-y divide-ui-border-base p-0 overflow-hidden">
       <div className="flex items-center justify-between px-6 py-4">
-        <Heading level="h2">{t("reviews.widget.product.title")}</Heading>
+        <Heading level="h2" className="text-base font-semibold">{t("reviews.widget.product.title")}</Heading>
         {data.pending > 0 && <Badge size="2xsmall" color="orange">{t("reviews.widget.product.pending", { count: data.pending })}</Badge>}
       </div>
-      <div className="flex flex-col gap-3 px-6 py-4">
+      <div className="flex flex-col gap-3.5 px-6 py-4">
         {rating && rating.count > 0 ? (
           <>
             <div className="flex items-center gap-3">
-              <Text size="xlarge" weight="plus">{rating.average.toFixed(1)}</Text>
-              <div className="flex flex-col">
-                <Stars rating={rating.average} size={16} />
-                <Text size="xsmall" className="text-ui-fg-muted">{t("reviews.widget.product.count", { count: rating.count })}</Text>
+              <span className="text-2xl font-bold font-mono tracking-tight text-ui-fg-base">{rating.average.toFixed(1)}</span>
+              <div className="flex flex-col gap-0.5">
+                <Stars rating={rating.average} size={15} />
+                <Text size="xsmall" className="text-ui-fg-muted font-medium">{t("reviews.widget.product.count", { count: rating.count })}</Text>
               </div>
             </div>
             <RatingBars distribution={rating.distribution} count={rating.count} />
@@ -37,12 +38,12 @@ const ProductReviewsWidget = ({ data: product }: DetailWidgetProps<AdminProduct>
           <Text size="small" className="text-ui-fg-subtle">{t("reviews.widget.product.none")}</Text>
         )}
         {config?.wishlist.enabled && (
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 pt-1 border-t border-ui-border-base/40">
             <Heart width={14} height={14} className="text-ui-fg-muted" />
             <Text size="small" className="text-ui-fg-subtle">{t("reviews.widget.product.wishlisted", { count: data.wishlist_count ?? 0 })}</Text>
           </div>
         )}
-        <Button size="small" variant="secondary" asChild>
+        <Button size="small" variant="secondary" asChild className="w-full justify-center">
           <Link to={`/reviews?product_id=${product.id}`}>{t("reviews.widget.product.open", { count: data.total })}</Link>
         </Button>
       </div>

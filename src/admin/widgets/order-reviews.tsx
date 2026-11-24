@@ -35,55 +35,73 @@ const OrderReviewsWidget = ({ data: order }: DetailWidgetProps<AdminOrder>) => {
   const enabled = config?.review_requests.enabled !== false
 
   return (
-    <Container className="divide-y p-0">
+    <Container className="divide-y divide-ui-border-base p-0 overflow-hidden">
       <div className="px-6 py-4">
-        <Heading level="h2">{t("reviews.widget.order.title")}</Heading>
+        <Heading level="h2" className="text-base font-semibold">{t("reviews.widget.order.title")}</Heading>
       </div>
+
       {rows.length === 0 ? (
         <div className="px-6 py-4">
           <Text size="small" className="text-ui-fg-subtle">{t("reviews.widget.order.none")}</Text>
         </div>
       ) : (
-        rows.map((r) => (
-          <div key={r.id} className="flex flex-col gap-1 px-6 py-3">
-            <div className="flex flex-wrap items-center gap-2">
-              <Stars rating={r.rating} />
-              <StatusBadge status={r.status} />
+        <div className="divide-y divide-ui-border-base/50">
+          {rows.map((r) => (
+            <div key={r.id} className="flex flex-col gap-1.5 px-6 py-3.5 hover:bg-ui-bg-subtle/30 transition-colors">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <Stars rating={r.rating} />
+                <StatusBadge status={r.status} />
+              </div>
+              {r.title && (
+                <Text size="small" weight="plus" className="text-ui-fg-base">
+                  {r.title}
+                </Text>
+              )}
+              <Text size="small" className="line-clamp-2 text-ui-fg-subtle leading-relaxed">
+                {r.body}
+              </Text>
+              <Text size="xsmall" className="text-ui-fg-muted">
+                {r.product_title ?? r.product_id} · {formatDateTime(r.created_at, l)}
+              </Text>
             </div>
-            <Text size="small" className="line-clamp-2">{r.title ? `${r.title} — ` : ""}{r.body}</Text>
-            <Text size="xsmall" className="text-ui-fg-muted">{r.product_title ?? r.product_id} · {formatDateTime(r.created_at, l)}</Text>
-          </div>
-        ))
+          ))}
+        </div>
       )}
+
       {rows.length > 0 && (
-        <div className="px-6 py-3">
-          <Button size="small" variant="secondary" asChild>
+        <div className="px-6 py-3 bg-ui-bg-subtle/30">
+          <Button size="small" variant="secondary" asChild className="w-full justify-center">
             <Link to={`/reviews?order_id=${order.id}`}>{t("reviews.widget.order.open")}</Link>
           </Button>
         </div>
       )}
-      <div className="flex flex-col gap-2 px-6 py-4">
-        <Text size="small" weight="plus">{t("reviews.widget.order.request")}</Text>
+
+      <div className="flex flex-col gap-3 px-6 py-4">
+        <Text size="small" weight="plus" className="text-ui-fg-base">
+          {t("reviews.widget.order.request")}
+        </Text>
         {request ? (
-          <>
-            <div className="flex flex-wrap items-center gap-2">
+          <div className="flex flex-col gap-2.5">
+            <div className="flex flex-wrap items-center justify-between gap-2">
               <StatusBadge status={request.status} kind="request" />
-              <Text size="xsmall" className="text-ui-fg-muted">
+              <Text size="xsmall" className="text-ui-fg-muted font-mono">
                 {request.sent_at ? t("reviews.requests.sentAt", { date: formatDateTime(request.sent_at, l) }) : t("reviews.requests.scheduledAt", { date: formatDateTime(request.scheduled_at, l) })}
               </Text>
             </div>
             {request.last_error && <Text size="xsmall" className="text-ui-fg-error">{request.last_error}</Text>}
             {SENDABLE.has(request.status) && (
-              <Button size="small" variant="secondary" isLoading={send.isPending} onClick={() => send.mutate()}>
+              <Button size="small" variant="secondary" isLoading={send.isPending} onClick={() => send.mutate()} className="w-full justify-center">
                 {request.status === "sent" ? t("reviews.requests.resend") : t("reviews.requests.sendNow")}
               </Button>
             )}
-          </>
+          </div>
         ) : (
-          <>
+          <div className="flex flex-col gap-2">
             <Text size="xsmall" className="text-ui-fg-muted">{enabled ? t("reviews.widget.order.noRequest") : t("reviews.requests.disabled")}</Text>
-            <Button size="small" variant="secondary" isLoading={schedule.isPending} onClick={() => schedule.mutate()}>{t("reviews.widget.order.sendRequest")}</Button>
-          </>
+            <Button size="small" variant="secondary" isLoading={schedule.isPending} onClick={() => schedule.mutate()} className="w-full justify-center">
+              {t("reviews.widget.order.sendRequest")}
+            </Button>
+          </div>
         )}
       </div>
     </Container>

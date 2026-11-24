@@ -1,6 +1,19 @@
 import { defineRouteConfig } from "@medusajs/admin-sdk"
 import { Photo, Star } from "@medusajs/icons"
-import { Badge, Button, Checkbox, Container, Heading, Input, Prompt, Select, Tabs, Text, toast } from "@medusajs/ui"
+import {
+  Badge,
+  Button,
+  Checkbox,
+  Container,
+  Heading,
+  Input,
+  Prompt,
+  Select,
+  Table,
+  Tabs,
+  Text,
+  toast,
+} from "@medusajs/ui"
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { useEffect, useState } from "react"
 import { useTranslation } from "react-i18next"
@@ -29,7 +42,7 @@ import {
   STATS_KEY,
 } from "../../lib/api"
 
-const PAGE_SIZE = 25
+const PAGE_SIZE = 20
 
 const ReviewsPage = () => {
   const { t } = useTranslation()
@@ -41,20 +54,31 @@ const ReviewsPage = () => {
     else next.delete("tab")
     setParams(next, { replace: true })
   }
+
   return (
     <div className="flex flex-col gap-y-3">
       <Tabs value={tab} onValueChange={setTab}>
-        <Container className="divide-y p-0">
-          <div className="flex flex-wrap items-start justify-between gap-2 px-6 py-4">
+        <Container className="divide-y divide-ui-border-base p-0 overflow-hidden">
+          {/* Header */}
+          <div className="flex flex-wrap items-center justify-between gap-4 px-6 py-4">
             <div>
-              <Heading>{t("reviews.title")}</Heading>
-              <Text size="small" className="text-ui-fg-subtle mt-1">{t("reviews.description")}</Text>
+              <Heading level="h1" className="text-ui-fg-base text-lg font-semibold">
+                {t("reviews.title")}
+              </Heading>
+              <Text size="small" className="text-ui-fg-subtle mt-0.5">
+                {t("reviews.description")}
+              </Text>
             </div>
-            <Tabs.List>
-              <Tabs.Trigger value="reviews">{t("reviews.tabs.reviews")}</Tabs.Trigger>
-              <Tabs.Trigger value="requests">{t("reviews.tabs.requests")}</Tabs.Trigger>
+            <Tabs.List className="border border-ui-border-base bg-ui-bg-subtle p-0.5 rounded-lg">
+              <Tabs.Trigger value="reviews" className="px-3 py-1.5 text-xs font-medium">
+                {t("reviews.tabs.reviews")}
+              </Tabs.Trigger>
+              <Tabs.Trigger value="requests" className="px-3 py-1.5 text-xs font-medium">
+                {t("reviews.tabs.requests")}
+              </Tabs.Trigger>
             </Tabs.List>
           </div>
+
           <Tabs.Content value="reviews">
             <ReviewsTab />
           </Tabs.Content>
@@ -68,13 +92,12 @@ const ReviewsPage = () => {
   )
 }
 
-const chip = (active: boolean) => `flex flex-col items-start justify-center rounded-lg border px-3 py-2 text-left ${active ? "border-ui-fg-base bg-ui-bg-base-pressed" : "bg-ui-bg-base"}`
-
 const ReviewsTab = () => {
   const { t, i18n } = useTranslation()
   const l = lang(i18n.language)
   const qc = useQueryClient()
   const [params, setParams] = useSearchParams()
+
   const filters: ReviewFilters = {
     status: (params.get("status") as ReviewStatus) || undefined,
     product_id: params.get("product_id") ?? undefined,
@@ -84,6 +107,7 @@ const ReviewsTab = () => {
     q: params.get("q") ?? undefined,
     order: params.get("sort") ?? undefined,
   }
+
   const [search, setSearch] = useState(filters.q ?? "")
   const [offset, setOffset] = useState(0)
   const [selected, setSelected] = useState<Set<string>>(new Set())
@@ -98,27 +122,41 @@ const ReviewsTab = () => {
     setOffset(0)
     setSelected(new Set())
   }
+
   useEffect(() => {
-    const h = setTimeout(() => (search !== (filters.q ?? "") ? setFilter("q", search.trim() || null) : undefined), 350)
+    const h = setTimeout(
+      () => (search !== (filters.q ?? "") ? setFilter("q", search.trim() || null) : undefined),
+      350
+    )
     return () => clearTimeout(h)
   }, [search])
 
   const { data: config } = useQuery({ queryKey: CONFIG_KEY, queryFn: getConfig, staleTime: Infinity })
-  const { data: stats } = useQuery({ queryKey: [...STATS_KEY, filters.product_id], queryFn: () => getStats(filters.product_id), refetchInterval: 30_000 })
+  const { data: stats } = useQuery({
+    queryKey: [...STATS_KEY, filters.product_id],
+    queryFn: () => getStats(filters.product_id),
+    refetchInterval: 30_000,
+  })
   const { data, isLoading, isError } = useQuery({
     queryKey: [...REVIEWS_KEY, "list", filters, offset],
     queryFn: () => listReviews(filters, offset, PAGE_SIZE),
     placeholderData: keepPreviousData,
     refetchInterval: 30_000,
   })
+
   const rows = data?.reviews ?? []
   const count = data?.count ?? 0
   const allOnPage = rows.length > 0 && rows.every((r) => selected.has(r.id))
 
   const bulk = useMutation({
-    mutationFn: (body: { status?: "approved" | "rejected"; delete?: boolean }) => batchReviews({ ids: [...selected], ...body }),
+    mutationFn: (body: { status?: "approved" | "rejected"; delete?: boolean }) =>
+      batchReviews({ ids: [...selected], ...body }),
     onSuccess: (_r, body) => {
-      toast.success(body.delete ? t("reviews.toast.deletedMany", { count: selected.size }) : t(`reviews.toast.${body.status}Many`, { count: selected.size }))
+      toast.success(
+        body.delete
+          ? t("reviews.toast.deletedMany", { count: selected.size })
+          : t(`reviews.toast.${body.status}Many`, { count: selected.size })
+      )
       setSelected(new Set())
       qc.invalidateQueries({ queryKey: KEY })
     },
@@ -133,120 +171,280 @@ const ReviewsTab = () => {
       return n
     })
 
+  const STATUS_ITEMS = [
+    { key: "all", label: t("reviews.summary.all") },
+    { key: "pending", label: t("reviews.summary.pending"), countColor: "orange" },
+    { key: "approved", label: t("reviews.summary.approved"), countColor: "green" },
+    { key: "rejected", label: t("reviews.summary.rejected"), countColor: "grey" },
+  ] as const
+
   return (
-    <div className="divide-y">
-      {/* Summary tiles: tap to filter */}
-      <div className="flex gap-2 overflow-x-auto px-6 py-3">
-        {(["all", "pending", "approved", "rejected"] as const).map((s) => (
-          <button key={s} style={{ minHeight: 48, minWidth: 88 }} className={chip(s === "all" ? !filters.status : filters.status === s)} onClick={() => setFilter("status", s === "all" || filters.status === s ? null : s)}>
-            <Text size="xsmall" className={s === "pending" ? "text-ui-tag-orange-text" : "text-ui-fg-subtle"}>{t(`reviews.summary.${s}`)}</Text>
-            <Text weight="plus">{s === "all" ? stats?.total ?? 0 : stats?.[s] ?? 0}</Text>
-          </button>
-        ))}
+    <div className="divide-y divide-ui-border-base">
+      {/* Sleek status pill filter */}
+      <div className="flex flex-wrap items-center justify-between gap-3 px-6 py-3 bg-ui-bg-subtle/40">
+        <div className="inline-flex items-center gap-1 p-1 bg-ui-bg-subtle rounded-lg border border-ui-border-base">
+          {STATUS_ITEMS.map((item) => {
+            const isActive = item.key === "all" ? !filters.status : filters.status === item.key
+            const countVal = item.key === "all" ? stats?.total ?? 0 : stats?.[item.key] ?? 0
+            return (
+              <button
+                key={item.key}
+                type="button"
+                onClick={() => setFilter("status", item.key === "all" || filters.status === item.key ? null : item.key)}
+                className={`inline-flex items-center gap-2 px-3 py-1 rounded-md text-xs font-medium transition-all ${
+                  isActive
+                    ? "bg-ui-bg-base text-ui-fg-base shadow-borders-base font-semibold"
+                    : "text-ui-fg-subtle hover:text-ui-fg-base hover:bg-ui-bg-base/60"
+                }`}
+              >
+                <span>{item.label}</span>
+                <span
+                  className={`px-1.5 py-0.2 rounded-full text-[11px] font-mono leading-tight ${
+                    item.key === "pending" && countVal > 0
+                      ? "bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300 font-semibold"
+                      : isActive
+                        ? "bg-ui-bg-subtle text-ui-fg-subtle"
+                        : "text-ui-fg-muted"
+                  }`}
+                >
+                  {countVal}
+                </span>
+              </button>
+            )
+          })}
+        </div>
+
         {config?.auto_approve && (
-          <div className="flex items-center">
-            <Badge size="2xsmall" color="blue">{t("reviews.autoApproveOn")}</Badge>
-          </div>
+          <Badge size="2xsmall" color="blue">
+            {t("reviews.autoApproveOn")}
+          </Badge>
         )}
       </div>
 
-      {/* Filters */}
-      <div className="flex flex-col gap-2 px-6 py-3">
-        <Input type="search" placeholder={t("reviews.search")} value={search} onChange={(e) => setSearch(e.target.value)} style={{ height: 44 }} />
-        <div className="grid grid-cols-2 gap-2 md:grid-cols-4">
-          <Select value={filters.rating ? String(filters.rating) : "all"} onValueChange={(v) => setFilter("rating", v === "all" ? null : v)}>
-            <Select.Trigger style={{ height: 44 }}><Select.Value /></Select.Trigger>
-            <Select.Content>
-              <Select.Item value="all">{t("reviews.filters.anyRating")}</Select.Item>
-              {[5, 4, 3, 2, 1].map((n) => (
-                <Select.Item key={n} value={String(n)}>{t("reviews.filters.stars", { count: n })}</Select.Item>
-              ))}
-            </Select.Content>
-          </Select>
-          <Select value={filters.has_images ? "1" : "all"} onValueChange={(v) => setFilter("photos", v === "all" ? null : v)}>
-            <Select.Trigger style={{ height: 44 }}><Select.Value /></Select.Trigger>
-            <Select.Content>
-              <Select.Item value="all">{t("reviews.filters.withOrWithoutPhotos")}</Select.Item>
-              <Select.Item value="1">{t("reviews.filters.withPhotos")}</Select.Item>
-            </Select.Content>
-          </Select>
-          <Select value={filters.order ?? "-created_at"} onValueChange={(v) => setFilter("sort", v === "-created_at" ? null : v)}>
-            <Select.Trigger style={{ height: 44 }}><Select.Value /></Select.Trigger>
-            <Select.Content>
-              <Select.Item value="-created_at">{t("reviews.sort.newest")}</Select.Item>
-              <Select.Item value="created_at">{t("reviews.sort.oldest")}</Select.Item>
-              <Select.Item value="-rating">{t("reviews.sort.highest")}</Select.Item>
-              <Select.Item value="rating">{t("reviews.sort.lowest")}</Select.Item>
-            </Select.Content>
-          </Select>
-          {(filters.product_id || filters.order_id) && (
-            <Button variant="secondary" style={{ height: 44 }} onClick={() => (setFilter("product_id", null), setFilter("order_id", null))}>
-              {filters.product_id ? t("reviews.filters.clearProduct") : t("reviews.filters.clearOrder")}
-            </Button>
-          )}
-        </div>
+      {/* Filter toolbar */}
+      <div className="flex flex-wrap items-center gap-2 px-6 py-3">
+        <Input
+          size="small"
+          type="search"
+          placeholder={t("reviews.search")}
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          className="w-full sm:w-60"
+        />
+        <Select
+          size="small"
+          value={filters.rating ? String(filters.rating) : "all"}
+          onValueChange={(v) => setFilter("rating", v === "all" ? null : v)}
+        >
+          <Select.Trigger className="w-32">
+            <Select.Value />
+          </Select.Trigger>
+          <Select.Content>
+            <Select.Item value="all">{t("reviews.filters.anyRating")}</Select.Item>
+            {[5, 4, 3, 2, 1].map((n) => (
+              <Select.Item key={n} value={String(n)}>
+                {t("reviews.filters.stars", { count: n })}
+              </Select.Item>
+            ))}
+          </Select.Content>
+        </Select>
+
+        <Select
+          size="small"
+          value={filters.has_images ? "1" : "all"}
+          onValueChange={(v) => setFilter("photos", v === "all" ? null : v)}
+        >
+          <Select.Trigger className="w-40">
+            <Select.Value />
+          </Select.Trigger>
+          <Select.Content>
+            <Select.Item value="all">{t("reviews.filters.withOrWithoutPhotos")}</Select.Item>
+            <Select.Item value="1">{t("reviews.filters.withPhotos")}</Select.Item>
+          </Select.Content>
+        </Select>
+
+        <Select
+          size="small"
+          value={filters.order ?? "-created_at"}
+          onValueChange={(v) => setFilter("sort", v === "-created_at" ? null : v)}
+        >
+          <Select.Trigger className="w-36">
+            <Select.Value />
+          </Select.Trigger>
+          <Select.Content>
+            <Select.Item value="-created_at">{t("reviews.sort.newest")}</Select.Item>
+            <Select.Item value="created_at">{t("reviews.sort.oldest")}</Select.Item>
+            <Select.Item value="-rating">{t("reviews.sort.highest")}</Select.Item>
+            <Select.Item value="rating">{t("reviews.sort.lowest")}</Select.Item>
+          </Select.Content>
+        </Select>
+
+        {(filters.product_id || filters.order_id) && (
+          <Button
+            size="small"
+            variant="secondary"
+            onClick={() => {
+              setFilter("product_id", null)
+              setFilter("order_id", null)
+            }}
+          >
+            {filters.product_id ? t("reviews.filters.clearProduct") : t("reviews.filters.clearOrder")}
+          </Button>
+        )}
       </div>
 
-      {/* Bulk bar */}
+      {/* Bulk actions bar */}
       {selected.size > 0 && (
-        <div className="bg-ui-bg-subtle flex flex-wrap items-center gap-2 px-6 py-3">
-          <Text size="small" weight="plus">{t("reviews.selected", { count: selected.size })}</Text>
-          <Button size="small" isLoading={bulk.isPending} onClick={() => bulk.mutate({ status: "approved" })}>{t("reviews.actions.approve")}</Button>
-          <Button size="small" variant="secondary" isLoading={bulk.isPending} onClick={() => bulk.mutate({ status: "rejected" })}>{t("reviews.actions.reject")}</Button>
-          <Button size="small" variant="danger" onClick={() => setConfirmDelete(true)}>{t("reviews.actions.delete")}</Button>
-          <Button size="small" variant="transparent" onClick={() => setSelected(new Set())}>{t("reviews.actions.clearSelection")}</Button>
+        <div className="bg-ui-bg-subtle border-y border-ui-border-base flex flex-wrap items-center justify-between gap-2 px-6 py-2.5">
+          <Text size="small" weight="plus" className="text-ui-fg-base">
+            {t("reviews.selected", { count: selected.size })}
+          </Text>
+          <div className="flex items-center gap-2">
+            <Button
+              size="small"
+              isLoading={bulk.isPending}
+              onClick={() => bulk.mutate({ status: "approved" })}
+            >
+              {t("reviews.actions.approve")}
+            </Button>
+            <Button
+              size="small"
+              variant="secondary"
+              isLoading={bulk.isPending}
+              onClick={() => bulk.mutate({ status: "rejected" })}
+            >
+              {t("reviews.actions.reject")}
+            </Button>
+            <Button
+              size="small"
+              variant="danger"
+              onClick={() => setConfirmDelete(true)}
+            >
+              {t("reviews.actions.delete")}
+            </Button>
+            <Button
+              size="small"
+              variant="transparent"
+              onClick={() => setSelected(new Set())}
+            >
+              {t("reviews.actions.clearSelection")}
+            </Button>
+          </div>
         </div>
       )}
 
-      {/* List */}
+      {/* Main Reviews Table */}
       {isLoading ? (
         <Loading />
       ) : isError ? (
-        <Text className="px-6 py-8 text-center text-ui-fg-error">{t("reviews.loadError")}</Text>
-      ) : rows.length === 0 ? (
-        <Text className="px-6 py-8 text-center text-ui-fg-subtle">{t("reviews.empty")}</Text>
-      ) : (
-        <div className="divide-y">
-          <div className="flex items-center gap-3 px-6 py-2">
-            <Checkbox checked={allOnPage} onCheckedChange={() => setSelected(allOnPage ? new Set() : new Set(rows.map((r) => r.id)))} />
-            <Text size="xsmall" className="text-ui-fg-subtle">{t("reviews.selectPage")}</Text>
-          </div>
-          {rows.map((r) => (
-            <div key={r.id} className="flex items-start gap-3 px-6 py-3 hover:bg-ui-bg-base-hover">
-              <div className="pt-1">
-                <Checkbox checked={selected.has(r.id)} onCheckedChange={() => toggle(r.id)} />
-              </div>
-              <button className="min-w-0 flex-1 text-left" onClick={() => setOpen(r.id)}>
-                <div className="flex flex-wrap items-center gap-2">
-                  <Stars rating={r.rating} />
-                  <StatusBadge status={r.status} />
-                  {r.images.length > 0 && (
-                    <span className="inline-flex items-center gap-1 text-ui-fg-muted">
-                      <Photo width={14} height={14} /> <Text size="xsmall">{r.images.length}</Text>
-                    </span>
-                  )}
-                  {r.reply && <Badge size="2xsmall" color="grey">{t("reviews.replied")}</Badge>}
-                </div>
-                {r.title && <Text size="small" weight="plus" className="mt-1 truncate">{r.title}</Text>}
-                <Text size="small" className="line-clamp-2 text-ui-fg-subtle">{r.body}</Text>
-                <Text size="xsmall" className="mt-1 text-ui-fg-muted">
-                  {r.display_name} · {r.product_title ?? r.product_id}
-                  {r.order_display_id ? ` · #${r.order_display_id}` : ""} · {formatDateTime(r.created_at, l)}
-                </Text>
-              </button>
-            </div>
-          ))}
+        <div className="px-6 py-12 text-center text-ui-fg-error">
+          <Text>{t("reviews.loadError")}</Text>
         </div>
+      ) : rows.length === 0 ? (
+        <div className="px-6 py-12 text-center text-ui-fg-subtle">
+          <Text>{t("reviews.empty")}</Text>
+        </div>
+      ) : (
+        <Table>
+          <Table.Header>
+            <Table.Row>
+              <Table.HeaderCell className="w-12 pl-6">
+                <Checkbox
+                  checked={allOnPage}
+                  onCheckedChange={() => setSelected(allOnPage ? new Set() : new Set(rows.map((r) => r.id)))}
+                />
+              </Table.HeaderCell>
+              <Table.HeaderCell className="w-28">Status</Table.HeaderCell>
+              <Table.HeaderCell className="w-28">Rating</Table.HeaderCell>
+              <Table.HeaderCell>Review</Table.HeaderCell>
+              <Table.HeaderCell className="w-44">Product</Table.HeaderCell>
+              <Table.HeaderCell className="w-36">Customer</Table.HeaderCell>
+              <Table.HeaderCell className="w-32 pr-6 text-right">Date</Table.HeaderCell>
+            </Table.Row>
+          </Table.Header>
+          <Table.Body>
+            {rows.map((r) => (
+              <Table.Row
+                key={r.id}
+                className="cursor-pointer transition-colors hover:bg-ui-bg-base-hover"
+                onClick={() => setOpen(r.id)}
+              >
+                <Table.Cell className="w-12 pl-6" onClick={(e) => e.stopPropagation()}>
+                  <Checkbox checked={selected.has(r.id)} onCheckedChange={() => toggle(r.id)} />
+                </Table.Cell>
+                <Table.Cell>
+                  <StatusBadge status={r.status} />
+                </Table.Cell>
+                <Table.Cell>
+                  <div className="flex items-center gap-1.5">
+                    <Stars rating={r.rating} />
+                    {r.images.length > 0 && (
+                      <span className="inline-flex items-center gap-0.5 text-ui-fg-muted" title={`${r.images.length} photos`}>
+                        <Photo width={13} height={13} />
+                        <span className="text-[11px] font-mono">{r.images.length}</span>
+                      </span>
+                    )}
+                  </div>
+                </Table.Cell>
+                <Table.Cell>
+                  <div className="flex flex-col gap-0.5 max-w-lg py-1">
+                    {r.title && (
+                      <Text size="small" weight="plus" className="text-ui-fg-base truncate">
+                        {r.title}
+                      </Text>
+                    )}
+                    <Text size="small" className="text-ui-fg-subtle line-clamp-1">
+                      {r.body}
+                    </Text>
+                    {r.reply && (
+                      <div className="mt-1 flex items-center gap-1.5">
+                        <Badge size="2xsmall" color="grey">{t("reviews.replied")}</Badge>
+                        <span className="text-[11px] text-ui-fg-muted line-clamp-1 italic">
+                          "{r.reply.body}"
+                        </span>
+                      </div>
+                    )}
+                  </div>
+                </Table.Cell>
+                <Table.Cell>
+                  <Text size="small" className="text-ui-fg-base truncate max-w-[170px]" title={r.product_title ?? r.product_id}>
+                    {r.product_title ?? r.product_id}
+                  </Text>
+                </Table.Cell>
+                <Table.Cell>
+                  <div className="flex flex-col">
+                    <Text size="small" weight="plus" className="text-ui-fg-base">
+                      {r.display_name}
+                    </Text>
+                    {r.email && (
+                      <Text size="xsmall" className="text-ui-fg-muted truncate max-w-[140px]">
+                        {r.email}
+                      </Text>
+                    )}
+                  </div>
+                </Table.Cell>
+                <Table.Cell className="pr-6 text-right">
+                  <Text size="xsmall" className="text-ui-fg-muted whitespace-nowrap">
+                    {formatDateTime(r.created_at, l)}
+                  </Text>
+                </Table.Cell>
+              </Table.Row>
+            ))}
+          </Table.Body>
+        </Table>
       )}
 
       {/* Pagination */}
-      <div className="flex items-center justify-between px-6 py-3">
-        <Text size="xsmall" className="text-ui-fg-subtle">{t("reviews.pagination", { from: count ? offset + 1 : 0, to: Math.min(offset + PAGE_SIZE, count), count })}</Text>
-        <div className="flex gap-2">
-          <Button size="small" variant="secondary" disabled={offset === 0} onClick={() => setOffset(Math.max(0, offset - PAGE_SIZE))}>{t("reviews.prev")}</Button>
-          <Button size="small" variant="secondary" disabled={offset + PAGE_SIZE >= count} onClick={() => setOffset(offset + PAGE_SIZE)}>{t("reviews.next")}</Button>
-        </div>
-      </div>
+      <Table.Pagination
+        count={count}
+        pageSize={PAGE_SIZE}
+        pageIndex={Math.floor(offset / PAGE_SIZE)}
+        pageCount={Math.ceil(count / PAGE_SIZE) || 1}
+        canPreviousPage={offset > 0}
+        canNextPage={offset + PAGE_SIZE < count}
+        previousPage={() => setOffset(Math.max(0, offset - PAGE_SIZE))}
+        nextPage={() => setOffset(offset + PAGE_SIZE)}
+      />
 
       <ReviewDrawer id={open} onClose={() => setOpen(null)} />
       <Prompt open={confirmDelete} onOpenChange={setConfirmDelete}>
@@ -274,6 +472,7 @@ const RequestsTab = () => {
   const [status, setStatus] = useState("all")
   const [offset, setOffset] = useState(0)
   const [orderId, setOrderId] = useState("")
+
   const { data: config } = useQuery({ queryKey: CONFIG_KEY, queryFn: getConfig, staleTime: Infinity })
   const { data, isLoading } = useQuery({
     queryKey: [...REQUESTS_KEY, status, offset],
@@ -281,95 +480,171 @@ const RequestsTab = () => {
     placeholderData: keepPreviousData,
     refetchInterval: 30_000,
   })
+
   const rows = data?.review_requests ?? []
   const count = data?.count ?? 0
   const onError = (e: Error) => toast.error(e.message)
+
   const send = useMutation({
     mutationFn: (id: string) => sendRequest(id),
     onSuccess: (r) => {
-      toast[r.summary.sent ? "success" : "warning"](t(`reviews.requests.sendResult.${r.summary.sent ? "sent" : r.summary.skipped ? "skipped" : "failed"}`))
+      toast[r.summary.sent ? "success" : "warning"](
+        t(`reviews.requests.sendResult.${r.summary.sent ? "sent" : r.summary.skipped ? "skipped" : "failed"}`)
+      )
       qc.invalidateQueries({ queryKey: REQUESTS_KEY })
     },
     onError,
   })
+
   const schedule = useMutation({
     mutationFn: (sendNow: boolean) => scheduleRequest(orderId.trim(), sendNow),
     onSuccess: (r) => {
-      toast[r.status === "scheduled" || r.status === "exists" ? "success" : "warning"](t(`reviews.requests.scheduleResult.${r.status}`, { defaultValue: r.status }))
+      toast[r.status === "scheduled" || r.status === "exists" ? "success" : "warning"](
+        t(`reviews.requests.scheduleResult.${r.status}`, { defaultValue: r.status })
+      )
       setOrderId("")
       qc.invalidateQueries({ queryKey: REQUESTS_KEY })
     },
     onError,
   })
+
   const rr = config?.review_requests
 
   return (
-    <div className="divide-y">
-      <div className="flex flex-col gap-1 px-6 py-3">
+    <div className="divide-y divide-ui-border-base">
+      {/* Config Banner */}
+      <div className="flex flex-wrap items-center justify-between gap-2 px-6 py-3 bg-ui-bg-subtle/40">
         <Text size="small" className="text-ui-fg-subtle">
           {rr ? t("reviews.requests.settings", { trigger: t(`reviews.requests.trigger.${rr.trigger}`), days: rr.delay_days, ttl: rr.token_ttl_days }) : ""}
           {rr && rr.rules > 0 ? ` ${t("reviews.requests.rules", { count: rr.rules })}` : ""}
         </Text>
-        {rr && !rr.enabled && <Badge size="2xsmall" color="grey">{t("reviews.requests.disabled")}</Badge>}
-        {rr && rr.enabled && !rr.link_url_configured && <Badge size="2xsmall" color="red">{t("reviews.requests.noLinkUrl")}</Badge>}
+        <div className="flex items-center gap-2">
+          {rr && !rr.enabled && <Badge size="2xsmall" color="grey">{t("reviews.requests.disabled")}</Badge>}
+          {rr && rr.enabled && !rr.link_url_configured && <Badge size="2xsmall" color="red">{t("reviews.requests.noLinkUrl")}</Badge>}
+        </div>
       </div>
-      <div className="flex flex-col gap-2 px-6 py-3 md:flex-row md:items-center">
-        <Input placeholder={t("reviews.requests.orderIdPlaceholder")} value={orderId} onChange={(e) => setOrderId(e.target.value)} style={{ height: 44 }} className="md:max-w-xs" />
-        <Button size="small" variant="secondary" disabled={!orderId.trim()} isLoading={schedule.isPending} onClick={() => schedule.mutate(false)}>{t("reviews.requests.schedule")}</Button>
-        <Button size="small" variant="secondary" disabled={!orderId.trim()} isLoading={schedule.isPending} onClick={() => schedule.mutate(true)}>{t("reviews.requests.scheduleAndSend")}</Button>
-        <div className="md:ml-auto md:w-48">
-          <Select value={status} onValueChange={(v) => (setStatus(v), setOffset(0))}>
-            <Select.Trigger style={{ height: 44 }}><Select.Value /></Select.Trigger>
+
+      {/* Action Toolbar */}
+      <div className="flex flex-col gap-2 px-6 py-3 sm:flex-row sm:items-center">
+        <Input
+          size="small"
+          placeholder={t("reviews.requests.orderIdPlaceholder")}
+          value={orderId}
+          onChange={(e) => setOrderId(e.target.value)}
+          className="w-full sm:w-64"
+        />
+        <Button
+          size="small"
+          variant="secondary"
+          disabled={!orderId.trim()}
+          isLoading={schedule.isPending}
+          onClick={() => schedule.mutate(false)}
+        >
+          {t("reviews.requests.schedule")}
+        </Button>
+        <Button
+          size="small"
+          variant="secondary"
+          disabled={!orderId.trim()}
+          isLoading={schedule.isPending}
+          onClick={() => schedule.mutate(true)}
+        >
+          {t("reviews.requests.scheduleAndSend")}
+        </Button>
+
+        <div className="sm:ml-auto w-full sm:w-48">
+          <Select value={status} onValueChange={(v) => (setStatus(v), setOffset(0))} size="small">
+            <Select.Trigger>
+              <Select.Value />
+            </Select.Trigger>
             <Select.Content>
               <Select.Item value="all">{t("reviews.requests.allStatuses")}</Select.Item>
               {["scheduled", "sent", "used", "expired", "skipped", "failed", "opted_out"].map((s) => (
-                <Select.Item key={s} value={s}>{t(`reviews.requestStatus.${s}`)}</Select.Item>
+                <Select.Item key={s} value={s}>
+                  {t(`reviews.requestStatus.${s}`)}
+                </Select.Item>
               ))}
             </Select.Content>
           </Select>
         </div>
       </div>
+
+      {/* Requests Table */}
       {isLoading ? (
         <Loading />
       ) : rows.length === 0 ? (
-        <Text className="px-6 py-8 text-center text-ui-fg-subtle">{t("reviews.requests.empty")}</Text>
+        <div className="px-6 py-12 text-center text-ui-fg-subtle">
+          <Text>{t("reviews.requests.empty")}</Text>
+        </div>
       ) : (
-        <div className="divide-y">
-          {rows.map((r) => (
-            <div key={r.id} className="flex flex-wrap items-center gap-3 px-6 py-3">
-              <div className="min-w-0 flex-1">
-                <div className="flex flex-wrap items-center gap-2">
+        <Table>
+          <Table.Header>
+            <Table.Row>
+              <Table.HeaderCell className="w-28 pl-6">Status</Table.HeaderCell>
+              <Table.HeaderCell>Recipient</Table.HeaderCell>
+              <Table.HeaderCell>Order</Table.HeaderCell>
+              <Table.HeaderCell>Trigger</Table.HeaderCell>
+              <Table.HeaderCell>Timeline</Table.HeaderCell>
+              <Table.HeaderCell className="pr-6 text-right">Actions</Table.HeaderCell>
+            </Table.Row>
+          </Table.Header>
+          <Table.Body>
+            {rows.map((r) => (
+              <Table.Row key={r.id}>
+                <Table.Cell className="pl-6">
                   <StatusBadge status={r.status} kind="request" />
-                  <Text size="small" weight="plus">{r.email}</Text>
-                  <Text size="xsmall" className="text-ui-fg-muted">{t(`reviews.requests.trigger.${r.trigger}`, { defaultValue: r.trigger })} +{r.delay_days}d</Text>
-                </div>
-                <Text size="xsmall" className="text-ui-fg-muted">
-                  {t("reviews.requests.scheduledAt", { date: formatDateTime(r.scheduled_at, l) })}
-                  {r.sent_at ? ` · ${t("reviews.requests.sentAt", { date: formatDateTime(r.sent_at, l) })}` : ""}
-                  {r.expires_at && r.status === "sent" ? ` · ${t("reviews.requests.expiresAt", { date: formatDateTime(r.expires_at, l) })}` : ""}
-                  {r.used_at ? ` · ${t("reviews.requests.usedAt", { date: formatDateTime(r.used_at, l) })}` : ""}
-                </Text>
-                {r.last_error && <Text size="xsmall" className="text-ui-fg-error">{r.last_error}</Text>}
-              </div>
-              <Link to={`/orders/${r.order_id}`} className="txt-compact-small text-ui-fg-interactive hover:underline">
-                {t("reviews.requests.openOrder")}
-              </Link>
-              {SENDABLE.has(r.status) && (
-                <Button size="small" variant="secondary" isLoading={send.isPending && send.variables === r.id} onClick={() => send.mutate(r.id)}>
-                  {r.status === "sent" ? t("reviews.requests.resend") : t("reviews.requests.sendNow")}
-                </Button>
-              )}
-            </div>
-          ))}
-        </div>
+                </Table.Cell>
+                <Table.Cell>
+                  <Text size="small" weight="plus" className="text-ui-fg-base">
+                    {r.email}
+                  </Text>
+                  {r.last_error && <Text size="xsmall" className="text-ui-fg-error">{r.last_error}</Text>}
+                </Table.Cell>
+                <Table.Cell>
+                  <Link to={`/orders/${r.order_id}`} className="txt-compact-small text-ui-fg-interactive hover:underline">
+                    {r.order_id}
+                  </Link>
+                </Table.Cell>
+                <Table.Cell>
+                  <Text size="xsmall" className="text-ui-fg-muted">
+                    {t(`reviews.requests.trigger.${r.trigger}`, { defaultValue: r.trigger })} +{r.delay_days}d
+                  </Text>
+                </Table.Cell>
+                <Table.Cell>
+                  <div className="flex flex-col text-xs text-ui-fg-muted">
+                    <span>{t("reviews.requests.scheduledAt", { date: formatDateTime(r.scheduled_at, l) })}</span>
+                    {r.sent_at && <span>{t("reviews.requests.sentAt", { date: formatDateTime(r.sent_at, l) })}</span>}
+                  </div>
+                </Table.Cell>
+                <Table.Cell className="pr-6 text-right">
+                  {SENDABLE.has(r.status) && (
+                    <Button
+                      size="small"
+                      variant="secondary"
+                      isLoading={send.isPending && send.variables === r.id}
+                      onClick={() => send.mutate(r.id)}
+                    >
+                      {r.status === "sent" ? t("reviews.requests.resend") : t("reviews.requests.sendNow")}
+                    </Button>
+                  )}
+                </Table.Cell>
+              </Table.Row>
+            ))}
+          </Table.Body>
+        </Table>
       )}
-      <div className="flex items-center justify-between px-6 py-3">
-        <Text size="xsmall" className="text-ui-fg-subtle">{t("reviews.pagination", { from: count ? offset + 1 : 0, to: Math.min(offset + PAGE_SIZE, count), count })}</Text>
-        <div className="flex gap-2">
-          <Button size="small" variant="secondary" disabled={offset === 0} onClick={() => setOffset(Math.max(0, offset - PAGE_SIZE))}>{t("reviews.prev")}</Button>
-          <Button size="small" variant="secondary" disabled={offset + PAGE_SIZE >= count} onClick={() => setOffset(offset + PAGE_SIZE)}>{t("reviews.next")}</Button>
-        </div>
-      </div>
+
+      {/* Pagination */}
+      <Table.Pagination
+        count={count}
+        pageSize={PAGE_SIZE}
+        pageIndex={Math.floor(offset / PAGE_SIZE)}
+        pageCount={Math.ceil(count / PAGE_SIZE) || 1}
+        canPreviousPage={offset > 0}
+        canNextPage={offset + PAGE_SIZE < count}
+        previousPage={() => setOffset(Math.max(0, offset - PAGE_SIZE))}
+        nextPage={() => setOffset(offset + PAGE_SIZE)}
+      />
     </div>
   )
 }
